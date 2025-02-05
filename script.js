@@ -259,25 +259,28 @@
           const { created, karma } = userData;
           const ageSpan = document.createElement('span');
           ageSpan.textContent = `(${timeSince(created)} old, ${karma} karma)`;
-        ageSpan.style.fontSize = '0.8em'
-        ageSpan.style.marginLeft = '4px'
+          ageSpan.style.fontSize = '0.8em';
+          ageSpan.style.marginLeft = '4px';
 
-        usernameEl.parentNode.insertBefore(ageSpan, usernameEl.nextSibling)
+          usernameEl.parentNode.insertBefore(ageSpan, usernameEl.nextSibling);
 
-        const tags = loadTags(username)
-        tags.forEach((tag) => {
-          const tagSpan = createTagSpan(tag)
-          ageSpan.parentNode.insertBefore(tagSpan, ageSpan.nextSibling)
-        })
+          const tags = loadTags(username);
+          tags.forEach((tag) => {
+            const tagSpan = createTagSpan(tag);
+            ageSpan.parentNode.insertBefore(tagSpan, ageSpan.nextSibling);
+          });
 
-        const tagInput = createTagInput(username)
-        ageSpan.parentNode.insertBefore(tagInput, ageSpan.nextSibling)
+          const tagInput = createTagInput(username);
+          ageSpan.parentNode.insertBefore(tagInput, ageSpan.nextSibling);
 
-        const ratingControls = createRatingControls(username)
-        ageSpan.parentNode.insertBefore(ratingControls, ageSpan.nextSibling)
-      }
-    })
-  }
+          const ratingControls = createRatingControls(username);
+          ageSpan.parentNode.insertBefore(ratingControls, ageSpan.nextSibling);
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    }
+  };
 
-  displayAccountInfoAndTags()
-})()
+  displayAccountInfoAndTags();
+})();
