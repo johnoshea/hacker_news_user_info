@@ -19,20 +19,26 @@
 
   const fetchUserData = async (username) => {
     return new Promise((resolve, reject) => {
+      // Asynchronously fetch Hacker News user data for the provided username
       GM_xmlhttpRequest({
         method: 'GET',
         url: `https://hacker-news.firebaseio.com/v0/user/${username}.json`,
-        onload: function (response) {
+        onload: (response) => {
           if (response.status === 200) {
-            resolve(JSON.parse(response.responseText))
+            resolve(JSON.parse(response.responseText));
           } else {
-            reject(new Error('Error fetching user data'))
+            reject(new Error('Error fetching user data'));
           }
         },
-      })
-    })
-  }
+      });
+    });
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    }
+  };
 
+  // Calculate the elapsed time since the given Unix timestamp
+  // Returns a string representing the time difference in years, months or days
   const timeSince = (unixTimestamp) => {
     const seconds = Math.floor(new Date().getTime() / 1000 - unixTimestamp)
     const interval = Math.floor(seconds / 31536000)
@@ -59,6 +65,8 @@
     return GM_getValue(`hn_author_rating_${username}`, 0)
   }
 
+  // Create and return a rating control UI (up/down arrows and display)
+  // for the specified username
   const createRatingControls = (username) => {
     const ratingContainer = document.createElement('span')
     ratingContainer.style.marginLeft = '4px'
@@ -125,6 +133,7 @@
     return JSON.parse(GM_getValue(`hn_custom_tag_color_${tag}`, '{}'))
   }
 
+  // Create an input field for adding custom tags for the provided username
   const createTagInput = (username) => {
     const tags = loadTags(username)
     const input = document.createElement('input')
@@ -172,6 +181,8 @@
     )}%)`
   }
 
+  // Given an HSL background color (as a string), returns a contrasting text color ('black' or 'white')
+  // based on computed luminance
   const getContrastColor = (bgColor) => {
     const hslToRgb = (h, s, l) => {
       let r, g, b
@@ -234,22 +245,23 @@
     return tagSpan
   }
 
+  // Main function: Fetch user data and update the page by displaying account info, custom tags, and rating controls
   const displayAccountInfoAndTags = async () => {
-    const usernameElements = getUsernameElements()
-    const uniqueUsernames = [...new Set(getUsernames())]
+    const usernameElements = getUsernameElements();
+    const uniqueUsernames = [...new Set(getUsernames())];
 
-    const userDataPromises = uniqueUsernames.map(fetchUserData)
-    const userDataList = await Promise.all(userDataPromises)
+    const userDataPromises = uniqueUsernames.map(fetchUserData);
+    try {
+      const userDataList = await Promise.all(userDataPromises);
 
-    usernameElements.forEach((usernameEl) => {
-      const username = usernameEl.textContent
-      const userData = userDataList.find((data) => data.id === username)
+      usernameElements.forEach((usernameEl) => {
+        const username = usernameEl.textContent;
+        const userData = userDataList.find((data) => data.id === username);
 
-      if (userData) {
-        const ageSpan = document.createElement('span')
-        ageSpan.textContent = `(${timeSince(userData.created)} old, ${
-          userData.karma
-        } karma)`
+        if (userData) {
+          const { created, karma } = userData;
+          const ageSpan = document.createElement('span');
+          ageSpan.textContent = `(${timeSince(created)} old, ${karma} karma)`;
         ageSpan.style.fontSize = '0.8em'
         ageSpan.style.marginLeft = '4px'
 
