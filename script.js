@@ -32,9 +32,6 @@
         },
       });
     });
-    } catch (error) {
-      console.error('Error fetching user data:', error);
-    }
   };
 
   // Calculate the elapsed time since the given Unix timestamp
