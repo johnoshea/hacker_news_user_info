@@ -237,8 +237,14 @@
 			ratingDisplay.textContent = storage.loadAuthorRating(username);
 			ratingDisplay.className = "hn-rating-display";
 
+			// Prevent focus on buttons so spacebar doesn't trigger them
+			upArrow.tabIndex = -1;
+			downArrow.tabIndex = -1;
+
 			upArrow.addEventListener("click", (e) => {
 				e.preventDefault();
+				// Explicitly blur to remove focus after click
+				upArrow.blur();
 				const currentRating = Number.parseInt(ratingDisplay.textContent, 10);
 				const newRating = currentRating + 1;
 				storage.saveAuthorRating(username, newRating);
@@ -247,6 +253,8 @@
 
 			downArrow.addEventListener("click", (e) => {
 				e.preventDefault();
+				// Explicitly blur to remove focus after click
+				downArrow.blur();
 				const currentRating = Number.parseInt(ratingDisplay.textContent, 10);
 				const newRating = currentRating - 1;
 				storage.saveAuthorRating(username, newRating);
