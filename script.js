@@ -425,49 +425,132 @@
 	// State Management
 	const stateManagement = {
 		exportState: () => {
-			// Get all stored data
-			const data = {};
+			// Create normalized data structure
+			const exportData = {
+				customTags: {},
+				users: {}
+			};
 			
-			// Export stored data
+			// Get all unique tag definitions and users
+			let allTagDefinitions = new Map();
+			
+			// Function to process user data
+			const processUserData = (username) => {
+				// Get user rating
+				const rating = GM_getValue(`hn_author_rating_${username}`, 0);
+				
+				// Get user tags
+				const tagsRaw = GM_getValue(`hn_custom_tags_${username}`, "[]");
+				let tags = [];
+				
+				try {
+					const parsedTags = JSON.parse(tagsRaw);
+					
+					// Add each tag to the global tag definitions if not already there
+					parsedTags.forEach(tag => {
+						const tagName = tag.value;
+						
+						// Add to tag definitions if not already there
+						if (!allTagDefinitions.has(tagName)) {
+							const tagColorData = GM_getValue(`hn_custom_tag_color_${tagName}`, "{}");
+							let colorInfo;
+							
+							try {
+								colorInfo = JSON.parse(tagColorData);
+							} catch (e) {
+								colorInfo = {
+									bgColor: tag.bgColor || colorUtils.randomLightColor(),
+									textColor: tag.textColor || "black"
+								};
+							}
+							
+							allTagDefinitions.set(tagName, {
+								bgColor: colorInfo.bgColor,
+								textColor: colorInfo.textColor
+							});
+						}
+						
+						// Add tag reference to user's tags
+						tags.push(tagName);
+					});
+				} catch (e) {
+					console.error(`Failed to parse tags for ${username}:`, e);
+				}
+				
+				// Only add user if they have rating or tags
+				if (rating !== 0 || tags.length > 0) {
+					exportData.users[username] = {
+						rating: rating,
+						tags: tags
+					};
+				}
+			};
+			
+			// Process all users from storage
 			if (typeof GM_listValues === 'function') {
 				const allKeys = GM_listValues();
+				
+				// First, find all user ratings and custom tags
+				const userSet = new Set();
+				
 				for (const key of allKeys) {
-					// Only export our script's data
-					if (key.startsWith('hn_')) {
-						data[key] = GM_getValue(key);
+					// Extract usernames from rating keys
+					if (key.startsWith('hn_author_rating_')) {
+						const username = key.replace('hn_author_rating_', '');
+						userSet.add(username);
 					}
-				}
-			} else {
-				// If GM_listValues is not available
-				// Get all usernames from the page and manually include their data
-				const usernames = getUsernames();
-				for (const username of usernames) {
-					// Author ratings
-					const ratingKey = `hn_author_rating_${username}`;
-					data[ratingKey] = GM_getValue(ratingKey, 0);
-					
-					// Tags
-					const tagsKey = `hn_custom_tags_${username}`;
-					const tagsValue = GM_getValue(tagsKey, "[]");
-					data[tagsKey] = tagsValue;
-					
-					// Get tag colors for all tags
-					try {
-						const tags = JSON.parse(tagsValue);
-						for (const tag of tags) {
-							const tagColorKey = `hn_custom_tag_color_${tag.value}`;
-							data[tagColorKey] = GM_getValue(tagColorKey, "{}");
-						}
-					} catch (e) {
-						console.error("Failed to parse tags:", e);
+					// Extract usernames from tag keys
+					else if (key.startsWith('hn_custom_tags_')) {
+						const username = key.replace('hn_custom_tags_', '');
+						userSet.add(username);
 					}
 				}
 				
+				// Process each user
+				userSet.forEach(username => {
+					processUserData(username);
+				});
+				
+				// Extract all tag colors for completeness
+				for (const key of allKeys) {
+					if (key.startsWith('hn_custom_tag_color_')) {
+						const tagName = key.replace('hn_custom_tag_color_', '');
+						
+						// Only add if not already processed
+						if (!allTagDefinitions.has(tagName)) {
+							const tagColorData = GM_getValue(key, "{}");
+							
+							try {
+								const colorInfo = JSON.parse(tagColorData);
+								if (colorInfo.bgColor) {
+									allTagDefinitions.set(tagName, {
+										bgColor: colorInfo.bgColor,
+										textColor: colorInfo.textColor || "black"
+									});
+								}
+							} catch (e) {
+								console.error(`Failed to parse tag color for ${tagName}:`, e);
+							}
+						}
+					}
+				}
+			} else {
+				// If GM_listValues is not available, use current page data
 				console.warn("GM_listValues is not available. Export may be incomplete.");
+				const usernames = getUsernames();
+				
+				for (const username of usernames) {
+					processUserData(username);
+				}
 			}
 			
+			// Convert tag definitions Map to object
+			allTagDefinitions.forEach((tagInfo, tagName) => {
+				exportData.customTags[tagName] = tagInfo;
+			});
+			
 			// Create a blob and trigger download
-			const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+			const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
 			const url = URL.createObjectURL(blob);
 			
 			// Create a link element and trigger a click
@@ -497,7 +580,7 @@
 				const reader = new FileReader();
 				reader.onload = (e) => {
 					try {
-						const data = JSON.parse(e.target.result);
+						const importedData = JSON.parse(e.target.result);
 						
 						// Clear existing data if GM_listValues is available
 						if (typeof GM_listValues === 'function') {
@@ -511,10 +594,42 @@
 							}
 						}
 						
-						// Import new data
-						for (const [key, value] of Object.entries(data)) {
-							if (key.startsWith('hn_')) {
-								GM_setValue(key, value);
+						// Handle both the new format and legacy format
+						if (importedData.customTags && importedData.users) {
+							// New format - Process tag definitions
+							for (const [tagName, tagInfo] of Object.entries(importedData.customTags)) {
+								GM_setValue(
+									`hn_custom_tag_color_${tagName}`, 
+									JSON.stringify({
+										bgColor: tagInfo.bgColor,
+										textColor: tagInfo.textColor
+									})
+								);
+							}
+							
+							// Process user data
+							for (const [username, userData] of Object.entries(importedData.users)) {
+								// Save user rating
+								GM_setValue(`hn_author_rating_${username}`, userData.rating);
+								
+								// Save user tags
+								const userTags = userData.tags.map(tagName => {
+									const tagInfo = importedData.customTags[tagName];
+									return {
+										value: tagName,
+										bgColor: tagInfo?.bgColor || colorUtils.randomLightColor(),
+										textColor: tagInfo?.textColor || 'black'
+									};
+								});
+								
+								GM_setValue(`hn_custom_tags_${username}`, JSON.stringify(userTags));
+							}
+						} else {
+							// Legacy format - directly copy values
+							for (const [key, value] of Object.entries(importedData)) {
+								if (key.startsWith('hn_')) {
+									GM_setValue(key, value);
+								}
 							}
 						}
 						
