@@ -9,6 +9,8 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
+// @grant        GM_listValues
+// @grant        GM_deleteValue
 // ==/UserScript==
 
 (() => {
@@ -45,6 +47,30 @@
       font-weight: 700;
       position: relative;
       top: 3px;
+    }
+    .hn-toolbar {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background-color: white;
+      border: 1px solid #ff6600;
+      border-radius: 4px;
+      padding: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      z-index: 9999;
+    }
+    .hn-toolbar-btn {
+      background-color: #ff6600;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      padding: 5px 10px;
+      margin: 0 5px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .hn-toolbar-btn:hover {
+      background-color: #ff8533;
     }
   `);
 
@@ -396,6 +422,139 @@
 		}
 	};
 
+	// State Management
+	const stateManagement = {
+		exportState: () => {
+			// Get all stored data
+			const data = {};
+			
+			// Export stored data
+			if (typeof GM_listValues === 'function') {
+				const allKeys = GM_listValues();
+				for (const key of allKeys) {
+					// Only export our script's data
+					if (key.startsWith('hn_')) {
+						data[key] = GM_getValue(key);
+					}
+				}
+			} else {
+				// If GM_listValues is not available
+				// Get all usernames from the page and manually include their data
+				const usernames = getUsernames();
+				for (const username of usernames) {
+					// Author ratings
+					const ratingKey = `hn_author_rating_${username}`;
+					data[ratingKey] = GM_getValue(ratingKey, 0);
+					
+					// Tags
+					const tagsKey = `hn_custom_tags_${username}`;
+					const tagsValue = GM_getValue(tagsKey, "[]");
+					data[tagsKey] = tagsValue;
+					
+					// Get tag colors for all tags
+					try {
+						const tags = JSON.parse(tagsValue);
+						for (const tag of tags) {
+							const tagColorKey = `hn_custom_tag_color_${tag.value}`;
+							data[tagColorKey] = GM_getValue(tagColorKey, "{}");
+						}
+					} catch (e) {
+						console.error("Failed to parse tags:", e);
+					}
+				}
+				
+				console.warn("GM_listValues is not available. Export may be incomplete.");
+			}
+			
+			// Create a blob and trigger download
+			const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+			const url = URL.createObjectURL(blob);
+			
+			// Create a link element and trigger a click
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `hn-user-data-${new Date().toISOString().split('T')[0]}.json`;
+			document.body.appendChild(a);
+			a.click();
+			
+			// Clean up
+			setTimeout(() => {
+				document.body.removeChild(a);
+				URL.revokeObjectURL(url);
+			}, 100);
+		},
+		
+		importState: () => {
+			// Create a file input element
+			const input = document.createElement('input');
+			input.type = 'file';
+			input.accept = '.json';
+			
+			input.onchange = (event) => {
+				const file = event.target.files[0];
+				if (!file) return;
+				
+				const reader = new FileReader();
+				reader.onload = (e) => {
+					try {
+						const data = JSON.parse(e.target.result);
+						
+						// Clear existing data if GM_listValues is available
+						if (typeof GM_listValues === 'function') {
+							const allKeys = GM_listValues();
+							for (const key of allKeys) {
+								if (key.startsWith('hn_')) {
+									if (typeof GM_deleteValue === 'function') {
+										GM_deleteValue(key);
+									}
+								}
+							}
+						}
+						
+						// Import new data
+						for (const [key, value] of Object.entries(data)) {
+							if (key.startsWith('hn_')) {
+								GM_setValue(key, value);
+							}
+						}
+						
+						// Refresh the page to show the new data
+						alert('Data imported successfully! The page will now reload.');
+						location.reload();
+					} catch (error) {
+						alert(`Error importing data: ${error.message}`);
+						console.error('Error importing data:', error);
+					}
+				};
+				
+				reader.readAsText(file);
+			};
+			
+			// Trigger file selection
+			input.click();
+		}
+	};
+
+	// Toolbar UI
+	const createToolbar = () => {
+		const toolbar = document.createElement('div');
+		toolbar.className = 'hn-toolbar';
+		
+		const saveButton = document.createElement('button');
+		saveButton.textContent = 'Save state';
+		saveButton.className = 'hn-toolbar-btn';
+		saveButton.addEventListener('click', stateManagement.exportState);
+		
+		const restoreButton = document.createElement('button');
+		restoreButton.textContent = 'Restore state';
+		restoreButton.className = 'hn-toolbar-btn';
+		restoreButton.addEventListener('click', stateManagement.importState);
+		
+		toolbar.append(saveButton, restoreButton);
+		document.body.appendChild(toolbar);
+	};
+
 	// Initialize
 	displayAccountInfoAndTags();
+	createToolbar();
 })();
