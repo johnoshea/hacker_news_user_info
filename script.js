@@ -20,11 +20,15 @@
       font-size: 0.8em;
       margin-left: 4px;
     }
-    .hn-tags-container {
+    .hn-tag-input-row {
+      display: flex;
+      align-items: center;
+      margin-left: 4px;
+    }
+    .hn-tag-additional-container {
       display: flex;
       flex-direction: column;
-      margin-top: 4px;
-      margin-left: 4px;
+      margin-left: calc(200px + 8px); /* Width of input + margin */
     }
     .hn-tag {
       padding: 3px 6px;
@@ -492,22 +496,36 @@
 				const ratingControls = ui.createRatingControls(username);
 				fragment.appendChild(ratingControls);
 
+				// Create a container for input and first tag
+				const tagInputRow = document.createElement("div");
+				tagInputRow.className = "hn-tag-input-row";
+				
 				// Add tag input
 				const tagInput = ui.createTagInput(username);
-				fragment.appendChild(tagInput);
-
-				// Add existing tags in a vertical container
+				tagInputRow.appendChild(tagInput);
+				
+				// Get all tags
 				const tags = storage.loadTags(username);
+				
+				// Add first tag to same row as input if it exists
 				if (tags.length > 0) {
-					const tagsContainer = document.createElement("div");
-					tagsContainer.className = "hn-tags-container";
+					const firstTagSpan = ui.createTagSpan(tags[0], username);
+					tagInputRow.appendChild(firstTagSpan);
+				}
+				
+				fragment.appendChild(tagInputRow);
+				
+				// Add additional tags in a vertical container below
+				if (tags.length > 1) {
+					const additionalTagsContainer = document.createElement("div");
+					additionalTagsContainer.className = "hn-tag-additional-container";
 					
-					for (const tag of tags) {
-						const tagSpan = ui.createTagSpan(tag, username);
-						tagsContainer.appendChild(tagSpan);
+					for (let i = 1; i < tags.length; i++) {
+						const tagSpan = ui.createTagSpan(tags[i], username);
+						additionalTagsContainer.appendChild(tagSpan);
 					}
 					
-					fragment.appendChild(tagsContainer);
+					fragment.appendChild(additionalTagsContainer);
 				}
 
 				// Insert all elements at once
