@@ -22,18 +22,16 @@
     }
     .hn-tag-container {
       display: flex;
-      flex-direction: column;
       margin-left: 4px;
+    }
+    .hn-tag-group {
+      display: flex;
+      flex-direction: column;
+      margin-left: 5px;
     }
     .hn-tags-row {
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
-    }
-    .hn-tag-additional-container {
-      display: flex;
-      flex-direction: column;
-      margin-left: 4px;
     }
     .hn-tag {
       padding: 3px 6px;
@@ -503,42 +501,32 @@
 				const ratingControls = ui.createRatingControls(username);
 				fragment.appendChild(ratingControls);
 				
-				// Add tag input directly in the main row
+				// Create container for input and tags
+				const tagContainer = document.createElement("div");
+				tagContainer.className = "hn-tag-container";
+				
+				// Add tag input to container
 				const tagInput = ui.createTagInput(username);
-				fragment.appendChild(tagInput);
+				tagContainer.appendChild(tagInput);
 				
 				// Get all tags
 				const tags = storage.loadTags(username);
 				
-				// Create a container for all tags
-				const tagContainer = document.createElement("div");
-				tagContainer.className = "hn-tag-container";
+				// Create a group for all tags
+				const tagGroup = document.createElement("div");
+				tagGroup.className = "hn-tag-group";
 				
-				// Create first row for tags
-				const tagsRow = document.createElement("div");
-				tagsRow.className = "hn-tags-row";
-				
-				// Add first tag if it exists
-				if (tags.length > 0) {
-					const firstTagSpan = ui.createTagSpan(tags[0], username);
-					tagsRow.appendChild(firstTagSpan);
+				// Add all tags vertically in the group
+				for (let i = 0; i < tags.length; i++) {
+					const tagSpan = ui.createTagSpan(tags[i], username);
+					tagGroup.appendChild(tagSpan);
 				}
 				
-				tagContainer.appendChild(tagsRow);
+				// Add tag group to container
+				tagContainer.appendChild(tagGroup);
+				
+				// Add the container to fragment
 				fragment.appendChild(tagContainer);
-				
-				// Add additional tags in a vertical container below
-				if (tags.length > 1) {
-					const additionalTagsContainer = document.createElement("div");
-					additionalTagsContainer.className = "hn-tag-additional-container";
-					
-					for (let i = 1; i < tags.length; i++) {
-						const tagSpan = ui.createTagSpan(tags[i], username);
-						additionalTagsContainer.appendChild(tagSpan);
-					}
-					
-					tagContainer.appendChild(additionalTagsContainer);
-				}
 
 				// Insert all elements at once
 				usernameEl.parentNode.insertBefore(fragment, usernameEl.nextSibling);
