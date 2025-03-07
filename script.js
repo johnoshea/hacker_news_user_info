@@ -22,6 +22,7 @@
     }
     .hn-tag-container {
       display: flex;
+      flex-direction: column;
       margin-left: 4px;
     }
     .hn-tag-group {
@@ -72,6 +73,10 @@
       font-size: 0.8em;
       margin-left: 4px;
       width: 200px;
+      height: 18px;
+      line-height: 18px;
+      display: inline-block;
+      vertical-align: middle;
     }
     .hn-rating-container {
       margin-left: 4px;
@@ -501,13 +506,13 @@
 				const ratingControls = ui.createRatingControls(username);
 				fragment.appendChild(ratingControls);
 				
-				// Create container for input and tags
+				// Add tag input directly to the fragment (same row)
+				const tagInput = ui.createTagInput(username);
+				fragment.appendChild(tagInput);
+				
+				// Create container for tags (below input row)
 				const tagContainer = document.createElement("div");
 				tagContainer.className = "hn-tag-container";
-				
-				// Add tag input to container
-				const tagInput = ui.createTagInput(username);
-				tagContainer.appendChild(tagInput);
 				
 				// Get all tags
 				const tags = storage.loadTags(username);
