@@ -20,19 +20,26 @@
       font-size: 0.8em;
       margin-left: 4px;
     }
-    .hn-tag-input-row {
+    .hn-tag-container {
       display: flex;
-      align-items: center;
+      flex-direction: column;
       margin-left: 4px;
+    }
+    .hn-tags-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
     }
     .hn-tag-additional-container {
       display: flex;
       flex-direction: column;
-      margin-left: calc(200px + 8px); /* Width of input + margin */
+      margin-left: 4px;
     }
     .hn-tag {
       padding: 3px 6px;
       margin-bottom: 3px;
+      margin-left: 5px;
+      margin-right: 5px;
       border-radius: 5px;
       font-size: 0.9em;
       font-weight: bold;
@@ -495,25 +502,30 @@
 				// Add rating controls
 				const ratingControls = ui.createRatingControls(username);
 				fragment.appendChild(ratingControls);
-
-				// Create a container for input and first tag
-				const tagInputRow = document.createElement("div");
-				tagInputRow.className = "hn-tag-input-row";
 				
-				// Add tag input
+				// Add tag input directly in the main row
 				const tagInput = ui.createTagInput(username);
-				tagInputRow.appendChild(tagInput);
+				fragment.appendChild(tagInput);
 				
 				// Get all tags
 				const tags = storage.loadTags(username);
 				
-				// Add first tag to same row as input if it exists
+				// Create a container for all tags
+				const tagContainer = document.createElement("div");
+				tagContainer.className = "hn-tag-container";
+				
+				// Create first row for tags
+				const tagsRow = document.createElement("div");
+				tagsRow.className = "hn-tags-row";
+				
+				// Add first tag if it exists
 				if (tags.length > 0) {
 					const firstTagSpan = ui.createTagSpan(tags[0], username);
-					tagInputRow.appendChild(firstTagSpan);
+					tagsRow.appendChild(firstTagSpan);
 				}
 				
-				fragment.appendChild(tagInputRow);
+				tagContainer.appendChild(tagsRow);
+				fragment.appendChild(tagContainer);
 				
 				// Add additional tags in a vertical container below
 				if (tags.length > 1) {
@@ -525,7 +537,7 @@
 						additionalTagsContainer.appendChild(tagSpan);
 					}
 					
-					fragment.appendChild(additionalTagsContainer);
+					tagContainer.appendChild(additionalTagsContainer);
 				}
 
 				// Insert all elements at once
