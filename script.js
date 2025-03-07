@@ -20,12 +20,44 @@
       font-size: 0.8em;
       margin-left: 4px;
     }
-    .hn-tag {
-      padding: 2px 4px;
+    .hn-tags-container {
+      display: flex;
+      flex-direction: column;
+      margin-top: 4px;
       margin-left: 4px;
-      border-radius: 3px;
-      font-size: 0.8em;
+    }
+    .hn-tag {
+      padding: 3px 6px;
+      margin-bottom: 3px;
+      border-radius: 5px;
+      font-size: 0.9em;
       font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: fit-content;
+    }
+    .hn-tag-text {
+      margin-right: 5px;
+    }
+    .hn-tag-icons {
+      display: flex;
+      align-items: center;
+    }
+    .hn-tag-icon {
+      cursor: pointer;
+      margin-left: 3px;
+      font-size: 0.8em;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background-color: rgba(255, 255, 255, 0.3);
+    }
+    .hn-tag-icon:hover {
+      background-color: rgba(255, 255, 255, 0.6);
     }
     .hn-tag-input {
       font-size: 0.8em;
@@ -340,12 +372,69 @@
 			return input;
 		},
 
-		createTagSpan: (tag) => {
-			const tagSpan = document.createElement("span");
-			tagSpan.textContent = tag.value;
+		createTagSpan: (tag, username) => {
+			const tagSpan = document.createElement("div");
 			tagSpan.className = "hn-tag";
 			tagSpan.style.backgroundColor = tag.bgColor;
 			tagSpan.style.color = tag.textColor;
+
+			// Tag text
+			const tagText = document.createElement("span");
+			tagText.textContent = tag.value;
+			tagText.className = "hn-tag-text";
+		
+			// Icons container
+			const iconsContainer = document.createElement("div");
+			iconsContainer.className = "hn-tag-icons";
+		
+			// Edit icon
+			const editIcon = document.createElement("span");
+			editIcon.innerHTML = "✏️";
+			editIcon.title = "Edit tag";
+			editIcon.className = "hn-tag-icon";
+			editIcon.addEventListener("click", (e) => {
+				e.stopPropagation();
+				const newName = prompt("Edit tag name:", tag.value);
+				if (newName && newName !== tag.value) {
+					// Get current tags
+					const currentTags = storage.loadTags(username);
+					// Update the specific tag
+					const updatedTags = currentTags.map(t => 
+						t.value === tag.value ? {...t, value: newName} : t
+					);
+					// Save updated tags
+					storage.saveTags(username, updatedTags);
+					// Refresh the display
+					location.reload();
+				}
+			});
+		
+			// Remove icon
+			const removeIcon = document.createElement("span");
+			removeIcon.innerHTML = "✖";
+			removeIcon.title = "Remove tag";
+			removeIcon.className = "hn-tag-icon";
+			removeIcon.addEventListener("click", (e) => {
+				e.stopPropagation();
+				if (confirm(`Remove tag "${tag.value}"?`)) {
+					// Get current tags
+					const currentTags = storage.loadTags(username);
+					// Filter out the removed tag
+					const updatedTags = currentTags.filter(t => t.value !== tag.value);
+					// Save updated tags
+					storage.saveTags(username, updatedTags);
+					// Refresh the display
+					location.reload();
+				}
+			});
+		
+			// Add icons to container
+			iconsContainer.appendChild(editIcon);
+			iconsContainer.appendChild(removeIcon);
+		
+			// Add text and icons to tag
+			tagSpan.appendChild(tagText);
+			tagSpan.appendChild(iconsContainer);
 
 			return tagSpan;
 		},
@@ -407,11 +496,18 @@
 				const tagInput = ui.createTagInput(username);
 				fragment.appendChild(tagInput);
 
-				// Add existing tags
+				// Add existing tags in a vertical container
 				const tags = storage.loadTags(username);
-				for (const tag of tags) {
-					const tagSpan = ui.createTagSpan(tag);
-					fragment.appendChild(tagSpan);
+				if (tags.length > 0) {
+					const tagsContainer = document.createElement("div");
+					tagsContainer.className = "hn-tags-container";
+					
+					for (const tag of tags) {
+						const tagSpan = ui.createTagSpan(tag, username);
+						tagsContainer.appendChild(tagSpan);
+					}
+					
+					fragment.appendChild(tagsContainer);
 				}
 
 				// Insert all elements at once
