@@ -22,6 +22,9 @@
       margin: 5px 0;
       width: 100%;
     }
+    .comment {
+      padding-top: 10px;
+    }
     .hn-username {
       font-weight: 700;
       font-size: 1.15em;
@@ -841,7 +844,19 @@
 		document.body.appendChild(toolbar);
 	};
 
+	// Remove <br/> tags before comments
+	const removeBrBeforeComments = () => {
+		const comments = document.querySelectorAll('div.comment');
+		comments.forEach(comment => {
+			const prevSibling = comment.previousSibling;
+			if (prevSibling && prevSibling.nodeName === 'BR') {
+				prevSibling.parentNode.removeChild(prevSibling);
+			}
+		});
+	};
+
 	// Initialize
 	displayAccountInfoAndTags();
 	createToolbar();
+	removeBrBeforeComments();
 })();
