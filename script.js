@@ -22,11 +22,15 @@
       margin: 5px 0;
       width: 100%;
     }
+    .hn-username {
+      font-weight: 700;
+      font-size: 1.15em;
+      margin-right: 5px;
+    }
     .hn-main-row {
       display: flex;
       flex-wrap: nowrap;
       align-items: center;
-      border-bottom: 1px solid #e6e6e6;
       padding-bottom: 2px;
       grid-column: 1;
     }
@@ -40,7 +44,6 @@
       flex-direction: column;
       grid-column: 2;
       grid-row: 1 / span 3;
-      border-left: 1px solid #e6e6e6;
       padding-left: 10px;
       margin-left: 10px;
     }
@@ -89,9 +92,9 @@
     .hn-tag-input {
       font-size: 0.8em;
       margin-left: 4px;
-      width: 150px;
-      height: 18px;
-      line-height: 18px;
+      width: 250px;
+      height: 30px;
+      line-height: 30px;
       display: inline-block;
       vertical-align: middle;
     }
@@ -546,6 +549,7 @@
 				
 				// Add username element (clone it)
 				const usernameClone = usernameEl.cloneNode(true);
+				usernameClone.className += " hn-username";
 				mainRow.appendChild(usernameClone);
 				
 				// Add account info, rating controls and tag input
