@@ -16,19 +16,37 @@
 (() => {
 	// Add styles to keep them separate from DOM manipulation
 	GM_addStyle(`
+    .hn-post-layout {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      margin: 5px 0;
+      width: 100%;
+    }
+    .hn-main-row {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: center;
+      border-bottom: 1px solid #e6e6e6;
+      padding-bottom: 2px;
+      grid-column: 1;
+    }
     .hn-info {
       font-size: 0.8em;
       margin-left: 4px;
+      white-space: nowrap;
     }
     .hn-tag-container {
       display: flex;
       flex-direction: column;
-      margin-left: 4px;
+      grid-column: 2;
+      grid-row: 1 / span 3;
+      border-left: 1px solid #e6e6e6;
+      padding-left: 10px;
+      margin-left: 10px;
     }
     .hn-tag-group {
       display: flex;
       flex-direction: column;
-      margin-left: 5px;
     }
     .hn-tags-row {
       display: flex;
@@ -37,7 +55,6 @@
     .hn-tag {
       padding: 3px 6px;
       margin-bottom: 3px;
-      margin-left: 5px;
       margin-right: 5px;
       border-radius: 5px;
       font-size: 0.9em;
@@ -72,7 +89,7 @@
     .hn-tag-input {
       font-size: 0.8em;
       margin-left: 4px;
-      width: 200px;
+      width: 150px;
       height: 18px;
       line-height: 18px;
       display: inline-block;
@@ -80,6 +97,9 @@
     }
     .hn-rating-container {
       margin-left: 4px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
     }
     .hn-rating-btn {
       font-size: 0.6em;
@@ -91,8 +111,6 @@
       padding: 0 4px 0 2px;
       color: #575F94;
       font-weight: 700;
-      position: relative;
-      top: 3px;
     }
     .hn-toolbar {
       position: fixed;
@@ -127,6 +145,16 @@
 	const getUsernameElements = () =>
 		Array.from(document.querySelectorAll(".hnuser"));
 	const getUsernames = () => getUsernameElements().map((el) => el.textContent);
+	
+	// Helper to find the correct parent for insertion
+	const findCommentParent = (usernameEl) => {
+		// Try to find comhead first
+		const comhead = usernameEl.closest('.comhead');
+		if (comhead) return comhead;
+		
+		// Fallback to direct parent
+		return usernameEl.parentElement;
+	};
 
 	// API Data Handling
 	const fetchUserData = async (username) => {
@@ -491,26 +519,44 @@
 				const username = usernameEl.textContent;
 				const userData = userDataMap.get(username);
 
-				if (!userData) return; // Skip if no data available
+				if (!userData) continue; // Skip if no data available
 
 				const { created, karma } = userData;
-
-				// Create a document fragment to minimize DOM operations
-				const fragment = document.createDocumentFragment();
-
-				// Add account info
+				
+				// Find the right parent for insertion
+				const parentElement = findCommentParent(usernameEl);
+				if (!parentElement) continue;
+				
+				// Create the main layout container
+				const layoutContainer = document.createElement("div");
+				layoutContainer.className = "hn-post-layout";
+				
+				// Create main row for username, age/karma, rating, and tag input
+				const mainRow = document.createElement("div");
+				mainRow.className = "hn-main-row";
+				
+				// Create and append account info
 				const ageSpan = ui.createAccountInfoSpan(created, karma);
-				fragment.appendChild(ageSpan);
-
-				// Add rating controls
+				
+				// Create rating controls
 				const ratingControls = ui.createRatingControls(username);
-				fragment.appendChild(ratingControls);
 				
-				// Add tag input directly to the fragment (same row)
+				// Create tag input
 				const tagInput = ui.createTagInput(username);
-				fragment.appendChild(tagInput);
 				
-				// Create container for tags (below input row)
+				// Add username element (clone it)
+				const usernameClone = usernameEl.cloneNode(true);
+				mainRow.appendChild(usernameClone);
+				
+				// Add account info, rating controls and tag input
+				mainRow.appendChild(ageSpan);
+				mainRow.appendChild(ratingControls);
+				mainRow.appendChild(tagInput);
+				
+				// Add the main row to the layout container
+				layoutContainer.appendChild(mainRow);
+				
+				// Create container for tags (right column)
 				const tagContainer = document.createElement("div");
 				tagContainer.className = "hn-tag-container";
 				
@@ -530,11 +576,14 @@
 				// Add tag group to container
 				tagContainer.appendChild(tagGroup);
 				
-				// Add the container to fragment
-				fragment.appendChild(tagContainer);
-
-				// Insert all elements at once
-				usernameEl.parentNode.insertBefore(fragment, usernameEl.nextSibling);
+				// Add the tag container to the layout
+				layoutContainer.appendChild(tagContainer);
+				
+				// Insert the layout after the parent element
+				parentElement.parentNode.insertBefore(layoutContainer, parentElement.nextSibling);
+				
+				// Hide the original username to avoid duplication
+				usernameEl.style.display = "none";
 			}
 		} catch (error) {
 			console.error("Error in displayAccountInfoAndTags:", error);
