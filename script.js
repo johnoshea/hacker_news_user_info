@@ -132,9 +132,9 @@
       align-items: center;
     }
     .hn-drag-handle {
-      width: 10px;
+      width: 12.5px;
       height: 100%;
-      background-color: #ff6600;
+      background-color: rgba(255, 102, 0, 0.5);
       cursor: move;
       position: absolute;
       left: 0;
