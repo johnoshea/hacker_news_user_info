@@ -876,10 +876,10 @@
 		restoreButton.addEventListener("click", stateManagement.importState);
 
 		// Create a container for buttons with padding to match right side spacing
-		const buttonContainer = document.createElement('div');
-		buttonContainer.style.display = 'flex';
-		buttonContainer.style.paddingLeft = '8px'; // Match the right padding
-		
+		const buttonContainer = document.createElement("div");
+		buttonContainer.style.display = "flex";
+		buttonContainer.style.paddingLeft = "8px"; // Match the right padding
+
 		buttonContainer.append(saveButton, restoreButton);
 		toolbar.append(dragHandle, buttonContainer);
 		document.body.appendChild(toolbar);
