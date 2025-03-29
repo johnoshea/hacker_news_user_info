@@ -165,13 +165,13 @@
 	const getUsernameElements = () =>
 		Array.from(document.querySelectorAll(".hnuser"));
 	const getUsernames = () => getUsernameElements().map((el) => el.textContent);
-	
+
 	// Helper to find the correct parent for insertion
 	const findCommentParent = (usernameEl) => {
 		// Try to find comhead first
-		const comhead = usernameEl.closest('.comhead');
+		const comhead = usernameEl.closest(".comhead");
 		if (comhead) return comhead;
-		
+
 		// Fallback to direct parent
 		return usernameEl.parentElement;
 	};
@@ -444,11 +444,11 @@
 			const tagText = document.createElement("span");
 			tagText.textContent = tag.value;
 			tagText.className = "hn-tag-text";
-		
+
 			// Icons container
 			const iconsContainer = document.createElement("div");
 			iconsContainer.className = "hn-tag-icons";
-		
+
 			// Edit icon
 			const editIcon = document.createElement("span");
 			editIcon.innerHTML = "✏️";
@@ -461,8 +461,8 @@
 					// Get current tags
 					const currentTags = storage.loadTags(username);
 					// Update the specific tag
-					const updatedTags = currentTags.map(t => 
-						t.value === tag.value ? {...t, value: newName} : t
+					const updatedTags = currentTags.map((t) =>
+						t.value === tag.value ? { ...t, value: newName } : t,
 					);
 					// Save updated tags
 					storage.saveTags(username, updatedTags);
@@ -470,7 +470,7 @@
 					location.reload();
 				}
 			});
-		
+
 			// Remove icon
 			const removeIcon = document.createElement("span");
 			removeIcon.innerHTML = "✖";
@@ -482,18 +482,18 @@
 					// Get current tags
 					const currentTags = storage.loadTags(username);
 					// Filter out the removed tag
-					const updatedTags = currentTags.filter(t => t.value !== tag.value);
+					const updatedTags = currentTags.filter((t) => t.value !== tag.value);
 					// Save updated tags
 					storage.saveTags(username, updatedTags);
 					// Refresh the display
 					location.reload();
 				}
 			});
-		
+
 			// Add icons to container
 			iconsContainer.appendChild(editIcon);
 			iconsContainer.appendChild(removeIcon);
-		
+
 			// Add text and icons to tag
 			tagSpan.appendChild(tagText);
 			tagSpan.appendChild(iconsContainer);
@@ -542,67 +542,70 @@
 				if (!userData) continue; // Skip if no data available
 
 				const { created, karma } = userData;
-				
+
 				// Find the right parent for insertion
 				const parentElement = findCommentParent(usernameEl);
 				if (!parentElement) continue;
-				
+
 				// Create the main layout container
 				const layoutContainer = document.createElement("div");
 				layoutContainer.className = "hn-post-layout";
-				
+
 				// Create main row for username, age/karma, rating, and tag input
 				const mainRow = document.createElement("div");
 				mainRow.className = "hn-main-row";
-				
+
 				// Create and append account info
 				const ageSpan = ui.createAccountInfoSpan(created, karma);
-				
+
 				// Create rating controls
 				const ratingControls = ui.createRatingControls(username);
-				
+
 				// Create tag input
 				const tagInput = ui.createTagInput(username);
-				
+
 				// Add username element (clone it)
 				const usernameClone = usernameEl.cloneNode(true);
 				usernameClone.className += " hn-username";
 				mainRow.appendChild(usernameClone);
-				
+
 				// Add account info, rating controls and tag input
 				mainRow.appendChild(ageSpan);
 				mainRow.appendChild(ratingControls);
 				mainRow.appendChild(tagInput);
-				
+
 				// Add the main row to the layout container
 				layoutContainer.appendChild(mainRow);
-				
+
 				// Create container for tags (right column)
 				const tagContainer = document.createElement("div");
 				tagContainer.className = "hn-tag-container";
-				
+
 				// Get all tags
 				const tags = storage.loadTags(username);
-				
+
 				// Create a group for all tags
 				const tagGroup = document.createElement("div");
 				tagGroup.className = "hn-tag-group";
-				
+
 				// Add all tags vertically in the group
 				for (let i = 0; i < tags.length; i++) {
 					const tagSpan = ui.createTagSpan(tags[i], username);
 					tagGroup.appendChild(tagSpan);
 				}
-				
+
 				// Add tag group to container
 				tagContainer.appendChild(tagGroup);
-				
+
 				// Add the tag container to the layout
 				layoutContainer.appendChild(tagContainer);
-				
+
 				// Insert the layout after the parent element
-				parentElement.parentNode.insertBefore(layoutContainer, parentElement.nextSibling);
-				
+				parentElement.parentNode.insertBefore(
+					layoutContainer,
+					parentElement.nextSibling,
+				);
+
 				// Hide the original username to avoid duplication
 				usernameEl.style.display = "none";
 			}
@@ -617,104 +620,107 @@
 			// Create normalized data structure
 			const exportData = {
 				customTags: {},
-				users: {}
+				users: {},
 			};
-			
+
 			// Get all unique tag definitions and users
 			let allTagDefinitions = new Map();
-			
+
 			// Function to process user data
 			const processUserData = (username) => {
 				// Get user rating
 				const rating = GM_getValue(`hn_author_rating_${username}`, 0);
-				
+
 				// Get user tags
 				const tagsRaw = GM_getValue(`hn_custom_tags_${username}`, "[]");
 				let tags = [];
-				
+
 				try {
 					const parsedTags = JSON.parse(tagsRaw);
-					
+
 					// Add each tag to the global tag definitions if not already there
-					parsedTags.forEach(tag => {
+					parsedTags.forEach((tag) => {
 						const tagName = tag.value;
-						
+
 						// Add to tag definitions if not already there
 						if (!allTagDefinitions.has(tagName)) {
-							const tagColorData = GM_getValue(`hn_custom_tag_color_${tagName}`, "{}");
+							const tagColorData = GM_getValue(
+								`hn_custom_tag_color_${tagName}`,
+								"{}",
+							);
 							let colorInfo;
-							
+
 							try {
 								colorInfo = JSON.parse(tagColorData);
 							} catch (e) {
 								colorInfo = {
 									bgColor: tag.bgColor || colorUtils.randomLightColor(),
-									textColor: tag.textColor || "black"
+									textColor: tag.textColor || "black",
 								};
 							}
-							
+
 							allTagDefinitions.set(tagName, {
 								bgColor: colorInfo.bgColor,
-								textColor: colorInfo.textColor
+								textColor: colorInfo.textColor,
 							});
 						}
-						
+
 						// Add tag reference to user's tags
 						tags.push(tagName);
 					});
 				} catch (e) {
 					console.error(`Failed to parse tags for ${username}:`, e);
 				}
-				
+
 				// Only add user if they have rating or tags
 				if (rating !== 0 || tags.length > 0) {
 					exportData.users[username] = {
 						rating: rating,
-						tags: tags
+						tags: tags,
 					};
 				}
 			};
-			
+
 			// Process all users from storage
-			if (typeof GM_listValues === 'function') {
+			if (typeof GM_listValues === "function") {
 				const allKeys = GM_listValues();
-				
+
 				// First, find all user ratings and custom tags
 				const userSet = new Set();
-				
+
 				for (const key of allKeys) {
 					// Extract usernames from rating keys
-					if (key.startsWith('hn_author_rating_')) {
-						const username = key.replace('hn_author_rating_', '');
+					if (key.startsWith("hn_author_rating_")) {
+						const username = key.replace("hn_author_rating_", "");
 						userSet.add(username);
 					}
 					// Extract usernames from tag keys
-					else if (key.startsWith('hn_custom_tags_')) {
-						const username = key.replace('hn_custom_tags_', '');
+					else if (key.startsWith("hn_custom_tags_")) {
+						const username = key.replace("hn_custom_tags_", "");
 						userSet.add(username);
 					}
 				}
-				
+
 				// Process each user
-				userSet.forEach(username => {
+				userSet.forEach((username) => {
 					processUserData(username);
 				});
-				
+
 				// Extract all tag colors for completeness
 				for (const key of allKeys) {
-					if (key.startsWith('hn_custom_tag_color_')) {
-						const tagName = key.replace('hn_custom_tag_color_', '');
-						
+					if (key.startsWith("hn_custom_tag_color_")) {
+						const tagName = key.replace("hn_custom_tag_color_", "");
+
 						// Only add if not already processed
 						if (!allTagDefinitions.has(tagName)) {
 							const tagColorData = GM_getValue(key, "{}");
-							
+
 							try {
 								const colorInfo = JSON.parse(tagColorData);
 								if (colorInfo.bgColor) {
 									allTagDefinitions.set(tagName, {
 										bgColor: colorInfo.bgColor,
-										textColor: colorInfo.textColor || "black"
+										textColor: colorInfo.textColor || "black",
 									});
 								}
 							} catch (e) {
@@ -725,179 +731,190 @@
 				}
 			} else {
 				// If GM_listValues is not available, use current page data
-				console.warn("GM_listValues is not available. Export may be incomplete.");
+				console.warn(
+					"GM_listValues is not available. Export may be incomplete.",
+				);
 				const usernames = getUsernames();
-				
+
 				for (const username of usernames) {
 					processUserData(username);
 				}
 			}
-			
+
 			// Convert tag definitions Map to object
 			allTagDefinitions.forEach((tagInfo, tagName) => {
 				exportData.customTags[tagName] = tagInfo;
 			});
-			
+
 			// Create a blob and trigger download
-			const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+			const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+				type: "application/json",
+			});
 			const url = URL.createObjectURL(blob);
-			
+
 			// Create a link element and trigger a click
-			const a = document.createElement('a');
+			const a = document.createElement("a");
 			a.href = url;
-			a.download = `hn-user-data-${new Date().toISOString().split('T')[0]}.json`;
+			a.download = `hn-user-data-${new Date().toISOString().split("T")[0]}.json`;
 			document.body.appendChild(a);
 			a.click();
-			
+
 			// Clean up
 			setTimeout(() => {
 				document.body.removeChild(a);
 				URL.revokeObjectURL(url);
 			}, 100);
 		},
-		
+
 		importState: () => {
 			// Create a file input element
-			const input = document.createElement('input');
-			input.type = 'file';
-			input.accept = '.json';
-			
+			const input = document.createElement("input");
+			input.type = "file";
+			input.accept = ".json";
+
 			input.onchange = (event) => {
 				const file = event.target.files[0];
 				if (!file) return;
-				
+
 				const reader = new FileReader();
 				reader.onload = (e) => {
 					try {
 						const importedData = JSON.parse(e.target.result);
-						
+
 						// Clear existing data if GM_listValues is available
-						if (typeof GM_listValues === 'function') {
+						if (typeof GM_listValues === "function") {
 							const allKeys = GM_listValues();
 							for (const key of allKeys) {
-								if (key.startsWith('hn_')) {
-									if (typeof GM_deleteValue === 'function') {
+								if (key.startsWith("hn_")) {
+									if (typeof GM_deleteValue === "function") {
 										GM_deleteValue(key);
 									}
 								}
 							}
 						}
-						
+
 						// Handle both the new format and legacy format
 						if (importedData.customTags && importedData.users) {
 							// New format - Process tag definitions
-							for (const [tagName, tagInfo] of Object.entries(importedData.customTags)) {
+							for (const [tagName, tagInfo] of Object.entries(
+								importedData.customTags,
+							)) {
 								GM_setValue(
-									`hn_custom_tag_color_${tagName}`, 
+									`hn_custom_tag_color_${tagName}`,
 									JSON.stringify({
 										bgColor: tagInfo.bgColor,
-										textColor: tagInfo.textColor
-									})
+										textColor: tagInfo.textColor,
+									}),
 								);
 							}
-							
+
 							// Process user data
-							for (const [username, userData] of Object.entries(importedData.users)) {
+							for (const [username, userData] of Object.entries(
+								importedData.users,
+							)) {
 								// Save user rating
 								GM_setValue(`hn_author_rating_${username}`, userData.rating);
-								
+
 								// Save user tags
-								const userTags = userData.tags.map(tagName => {
+								const userTags = userData.tags.map((tagName) => {
 									const tagInfo = importedData.customTags[tagName];
 									return {
 										value: tagName,
 										bgColor: tagInfo?.bgColor || colorUtils.randomLightColor(),
-										textColor: tagInfo?.textColor || 'black'
+										textColor: tagInfo?.textColor || "black",
 									};
 								});
-								
-								GM_setValue(`hn_custom_tags_${username}`, JSON.stringify(userTags));
+
+								GM_setValue(
+									`hn_custom_tags_${username}`,
+									JSON.stringify(userTags),
+								);
 							}
 						} else {
 							// Legacy format - directly copy values
 							for (const [key, value] of Object.entries(importedData)) {
-								if (key.startsWith('hn_')) {
+								if (key.startsWith("hn_")) {
 									GM_setValue(key, value);
 								}
 							}
 						}
-						
+
 						// Refresh the page to show the new data
-						alert('Data imported successfully! The page will now reload.');
+						alert("Data imported successfully! The page will now reload.");
 						location.reload();
 					} catch (error) {
 						alert(`Error importing data: ${error.message}`);
-						console.error('Error importing data:', error);
+						console.error("Error importing data:", error);
 					}
 				};
-				
+
 				reader.readAsText(file);
 			};
-			
+
 			// Trigger file selection
 			input.click();
-		}
+		},
 	};
 
 	// Toolbar UI
 	const createToolbar = () => {
-		const toolbar = document.createElement('div');
-		toolbar.className = 'hn-toolbar';
-		
+		const toolbar = document.createElement("div");
+		toolbar.className = "hn-toolbar";
+
 		// Add drag handle
-		const dragHandle = document.createElement('div');
-		dragHandle.className = 'hn-drag-handle';
-		
-		const saveButton = document.createElement('button');
-		saveButton.textContent = 'Save state';
-		saveButton.className = 'hn-toolbar-btn';
-		saveButton.addEventListener('click', stateManagement.exportState);
-		
-		const restoreButton = document.createElement('button');
-		restoreButton.textContent = 'Restore state';
-		restoreButton.className = 'hn-toolbar-btn';
-		restoreButton.addEventListener('click', stateManagement.importState);
-		
+		const dragHandle = document.createElement("div");
+		dragHandle.className = "hn-drag-handle";
+
+		const saveButton = document.createElement("button");
+		saveButton.textContent = "Save state";
+		saveButton.className = "hn-toolbar-btn";
+		saveButton.addEventListener("click", stateManagement.exportState);
+
+		const restoreButton = document.createElement("button");
+		restoreButton.textContent = "Restore state";
+		restoreButton.className = "hn-toolbar-btn";
+		restoreButton.addEventListener("click", stateManagement.importState);
+
 		toolbar.append(dragHandle, saveButton, restoreButton);
 		document.body.appendChild(toolbar);
-		
+
 		// Add drag functionality
 		let isDragging = false;
 		let offsetX, offsetY;
-		
-		dragHandle.addEventListener('mousedown', (e) => {
+
+		dragHandle.addEventListener("mousedown", (e) => {
 			isDragging = true;
 			const rect = toolbar.getBoundingClientRect();
 			offsetX = e.clientX - rect.left;
 			offsetY = e.clientY - rect.top;
-			
+
 			// Prevent text selection during drag
 			e.preventDefault();
 		});
-		
-		document.addEventListener('mousemove', (e) => {
+
+		document.addEventListener("mousemove", (e) => {
 			if (!isDragging) return;
-			
+
 			const left = e.clientX - offsetX;
 			const top = e.clientY - offsetY;
-			
+
 			// Update the toolbar position
 			toolbar.style.left = `${left}px`;
 			toolbar.style.top = `${top}px`;
-			toolbar.style.right = 'auto'; // Remove the default right positioning
+			toolbar.style.right = "auto"; // Remove the default right positioning
 		});
-		
-		document.addEventListener('mouseup', () => {
+
+		document.addEventListener("mouseup", () => {
 			isDragging = false;
 		});
 	};
 
 	// Remove <br/> tags before comments
 	const removeBrBeforeComments = () => {
-		const comments = document.querySelectorAll('div.comment');
-		comments.forEach(comment => {
+		const comments = document.querySelectorAll("div.comment");
+		comments.forEach((comment) => {
 			const prevSibling = comment.previousSibling;
-			if (prevSibling && prevSibling.nodeName === 'BR') {
+			if (prevSibling && prevSibling.nodeName === "BR") {
 				prevSibling.parentNode.removeChild(prevSibling);
 			}
 		});
