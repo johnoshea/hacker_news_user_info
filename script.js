@@ -128,6 +128,20 @@
       padding: 8px;
       box-shadow: 0 2px 5px rgba(0,0,0,0.2);
       z-index: 9999;
+      display: flex;
+      align-items: center;
+    }
+    .hn-drag-handle {
+      width: 10px;
+      height: 100%;
+      background-color: #ff6600;
+      cursor: move;
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      border-top-left-radius: 3px;
+      border-bottom-left-radius: 3px;
     }
     .hn-toolbar-btn {
       background-color: #ff6600;
@@ -830,6 +844,10 @@
 		const toolbar = document.createElement('div');
 		toolbar.className = 'hn-toolbar';
 		
+		// Add drag handle
+		const dragHandle = document.createElement('div');
+		dragHandle.className = 'hn-drag-handle';
+		
 		const saveButton = document.createElement('button');
 		saveButton.textContent = 'Save state';
 		saveButton.className = 'hn-toolbar-btn';
@@ -840,8 +858,38 @@
 		restoreButton.className = 'hn-toolbar-btn';
 		restoreButton.addEventListener('click', stateManagement.importState);
 		
-		toolbar.append(saveButton, restoreButton);
+		toolbar.append(dragHandle, saveButton, restoreButton);
 		document.body.appendChild(toolbar);
+		
+		// Add drag functionality
+		let isDragging = false;
+		let offsetX, offsetY;
+		
+		dragHandle.addEventListener('mousedown', (e) => {
+			isDragging = true;
+			const rect = toolbar.getBoundingClientRect();
+			offsetX = e.clientX - rect.left;
+			offsetY = e.clientY - rect.top;
+			
+			// Prevent text selection during drag
+			e.preventDefault();
+		});
+		
+		document.addEventListener('mousemove', (e) => {
+			if (!isDragging) return;
+			
+			const left = e.clientX - offsetX;
+			const top = e.clientY - offsetY;
+			
+			// Update the toolbar position
+			toolbar.style.left = `${left}px`;
+			toolbar.style.top = `${top}px`;
+			toolbar.style.right = 'auto'; // Remove the default right positioning
+		});
+		
+		document.addEventListener('mouseup', () => {
+			isDragging = false;
+		});
 	};
 
 	// Remove <br/> tags before comments
