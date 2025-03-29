@@ -875,7 +875,13 @@
 		restoreButton.className = "hn-toolbar-btn";
 		restoreButton.addEventListener("click", stateManagement.importState);
 
-		toolbar.append(dragHandle, saveButton, restoreButton);
+		// Create a container for buttons with padding to match right side spacing
+		const buttonContainer = document.createElement('div');
+		buttonContainer.style.display = 'flex';
+		buttonContainer.style.paddingLeft = '8px'; // Match the right padding
+		
+		buttonContainer.append(saveButton, restoreButton);
+		toolbar.append(dragHandle, buttonContainer);
 		document.body.appendChild(toolbar);
 
 		// Add drag functionality
