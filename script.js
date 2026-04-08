@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.3
+// @version      0.4
 // @description  Show account age, karma, custom tags, and author rating next to the username in Hacker News comment pages
 // @author       You
 // @match        https://news.ycombinator.com/item?id=*
@@ -10,11 +10,336 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_listValues
-// @grant        GM_deleteValue
 // ==/UserScript==
 
-(() => {
-	// Add styles to keep them separate from DOM manipulation
+// =============================================================================
+// Pure logic (Node-testable). Everything above the browser-bootstrap guard
+// below must be free of DOM and GM_* references so it can be required from
+// tests under Node without a userscript runtime.
+// =============================================================================
+
+const SECONDS_PER_DAY = 86400;
+const SECONDS_PER_MONTH = 2592000; // 30-day month, matches legacy behavior
+const SECONDS_PER_YEAR = 31536000; // 365-day year, matches legacy behavior
+
+function timeSince(createdUnixSeconds, nowUnixSeconds) {
+	const seconds = Math.floor(nowUnixSeconds - createdUnixSeconds);
+	const years = Math.floor(seconds / SECONDS_PER_YEAR);
+	if (years >= 1) return `${years} year${years === 1 ? "" : "s"}`;
+	const months = Math.floor(seconds / SECONDS_PER_MONTH);
+	if (months >= 1) return `${months} month${months === 1 ? "" : "s"}`;
+	const days = Math.floor(seconds / SECONDS_PER_DAY);
+	return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+// Single backend key holding all user-visible state. Consolidating everything
+// here means exports are one JSON.stringify and imports are one assignment,
+// and it eliminates the legacy prefix-scan over GM_listValues.
+const STATE_KEY = "hn_state";
+const STATE_SCHEMA_VERSION = 1;
+
+function emptyState() {
+	return {
+		schemaVersion: STATE_SCHEMA_VERSION,
+		ratings: {},
+		tags: {}, // username -> [tagName, ...]
+		colors: {}, // tagName  -> { bgColor, textColor }
+		cache: {}, // username -> { created, karma, fetchedAt }
+	};
+}
+
+// Factory over a { get(key), set(key, value) } backend. Loads the consolidated
+// state on first access and writes the whole blob back on each mutation.
+// Writes are cheap because the blob is small (a few KB even for heavy users).
+function createStore(backend) {
+	let state = null;
+
+	const load = () => {
+		if (state !== null) return state;
+		const raw = backend.get(STATE_KEY);
+		if (raw === undefined || raw === null || raw === "") {
+			state = emptyState();
+		} else {
+			try {
+				const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+				state = { ...emptyState(), ...parsed };
+			} catch (_err) {
+				state = emptyState();
+			}
+		}
+		return state;
+	};
+
+	const save = () => {
+		backend.set(STATE_KEY, JSON.stringify(state));
+	};
+
+	const hydrateTag = (tagName) => {
+		const color = load().colors[tagName] || {
+			bgColor: undefined,
+			textColor: undefined,
+		};
+		return {
+			value: tagName,
+			bgColor: color.bgColor,
+			textColor: color.textColor,
+		};
+	};
+
+	return {
+		getRating(username) {
+			return load().ratings[username] || 0;
+		},
+		setRating(username, rating) {
+			load().ratings[username] = rating;
+			save();
+		},
+		getUserTags(username) {
+			const names = load().tags[username] || [];
+			return names.map(hydrateTag);
+		},
+		setUserTags(username, tags) {
+			const s = load();
+			s.tags[username] = tags.map((t) => t.value);
+			// Record any color info that came along with the tag. If a tag already
+			// has a color, a caller-supplied color overrides it (setTagColor is the
+			// explicit "update the shared color" operation; passing a color here
+			// is how new tags get their initial color).
+			for (const t of tags) {
+				if (t.bgColor && t.textColor) {
+					s.colors[t.value] = { bgColor: t.bgColor, textColor: t.textColor };
+				}
+			}
+			save();
+		},
+		getTagColor(tagName) {
+			return load().colors[tagName] || null;
+		},
+		setTagColor(tagName, { bgColor, textColor }) {
+			load().colors[tagName] = { bgColor, textColor };
+			save();
+		},
+		// User-data cache. The `now` and `ttlMs` arguments are injected so tests
+		// can control time without mocking the clock. The browser call site
+		// passes Date.now() and a hardcoded TTL (see USER_CACHE_TTL_MS below).
+		getCachedUser(username, nowMs, ttlMs) {
+			const entry = load().cache[username];
+			if (!entry) return null;
+			if (nowMs - entry.fetchedAt > ttlMs) return null;
+			return { created: entry.created, karma: entry.karma };
+		},
+		setCachedUser(username, { created, karma }, nowMs) {
+			load().cache[username] = { created, karma, fetchedAt: nowMs };
+			save();
+		},
+		// Expose raw state for export and for callers that need to iterate.
+		_snapshot() {
+			return load();
+		},
+	};
+}
+
+// One-shot migration from the pre-rework key layout:
+//   hn_author_rating_<user>   -> int
+//   hn_custom_tags_<user>     -> JSON array of {value, bgColor, textColor}
+//   hn_custom_tag_color_<tag> -> JSON {bgColor, textColor}
+// to the single consolidated `hn_state` key. Legacy keys are left in place for
+// one version so a rollback of the script doesn't lose data. The migration is
+// idempotent and a no-op when hn_state already exists.
+//
+// Backend must additionally support list(): string[].
+const LEGACY_RATING_PREFIX = "hn_author_rating_";
+const LEGACY_TAGS_PREFIX = "hn_custom_tags_";
+const LEGACY_COLOR_PREFIX = "hn_custom_tag_color_";
+
+function migrateLegacyKeys(backend) {
+	if (backend.get(STATE_KEY) !== undefined) return;
+	if (typeof backend.list !== "function") return;
+
+	const keys = backend.list();
+	const hasLegacy = keys.some(
+		(k) =>
+			k.startsWith(LEGACY_RATING_PREFIX) ||
+			k.startsWith(LEGACY_TAGS_PREFIX) ||
+			k.startsWith(LEGACY_COLOR_PREFIX),
+	);
+	if (!hasLegacy) return;
+
+	const state = emptyState();
+
+	const parseJSON = (raw, fallback) => {
+		try {
+			return typeof raw === "string" ? JSON.parse(raw) : raw;
+		} catch (_err) {
+			return fallback;
+		}
+	};
+
+	for (const key of keys) {
+		if (key.startsWith(LEGACY_RATING_PREFIX)) {
+			const username = key.slice(LEGACY_RATING_PREFIX.length);
+			const value = backend.get(key);
+			const rating = typeof value === "number" ? value : Number(value);
+			if (!Number.isNaN(rating)) state.ratings[username] = rating;
+		} else if (key.startsWith(LEGACY_COLOR_PREFIX)) {
+			const tagName = key.slice(LEGACY_COLOR_PREFIX.length);
+			const color = parseJSON(backend.get(key), null);
+			if (color?.bgColor) {
+				state.colors[tagName] = {
+					bgColor: color.bgColor,
+					textColor: color.textColor || "black",
+				};
+			}
+		}
+	}
+
+	// Tags are processed after colors so legacy tag entries can contribute
+	// their embedded color info without overwriting the explicit color key.
+	for (const key of keys) {
+		if (!key.startsWith(LEGACY_TAGS_PREFIX)) continue;
+		const username = key.slice(LEGACY_TAGS_PREFIX.length);
+		const legacyTags = parseJSON(backend.get(key), []);
+		if (!Array.isArray(legacyTags)) continue;
+		const tagNames = [];
+		for (const t of legacyTags) {
+			if (!t || typeof t.value !== "string") continue;
+			tagNames.push(t.value);
+			if (!state.colors[t.value] && t.bgColor) {
+				state.colors[t.value] = {
+					bgColor: t.bgColor,
+					textColor: t.textColor || "black",
+				};
+			}
+		}
+		state.tags[username] = tagNames;
+	}
+
+	backend.set(STATE_KEY, JSON.stringify(state));
+}
+
+// Accepts either the normalized export shape ({customTags, users}) or the
+// legacy flat-key dump ({hn_author_rating_<u>: N, hn_custom_tags_<u>: "...", ...})
+// and produces a consolidated state object. The cache slot is left empty —
+// import is a user-data operation, not a cache restore.
+function parseImport(data) {
+	const state = emptyState();
+	if (!data || typeof data !== "object") return state;
+
+	// Normalized format.
+	if (data.customTags || data.users) {
+		if (data.customTags && typeof data.customTags === "object") {
+			for (const [tagName, info] of Object.entries(data.customTags)) {
+				if (info?.bgColor) {
+					state.colors[tagName] = {
+						bgColor: info.bgColor,
+						textColor: info.textColor || "black",
+					};
+				}
+			}
+		}
+		if (data.users && typeof data.users === "object") {
+			for (const [username, userData] of Object.entries(data.users)) {
+				if (!userData) continue;
+				if (typeof userData.rating === "number" && userData.rating !== 0) {
+					state.ratings[username] = userData.rating;
+				}
+				if (Array.isArray(userData.tags)) {
+					state.tags[username] = userData.tags.slice();
+				}
+			}
+		}
+		return state;
+	}
+
+	// Legacy flat-key format — mirrors migrateLegacyKeys but reads from a plain
+	// object instead of a backend.
+	const parseJSON = (raw, fallback) => {
+		try {
+			return typeof raw === "string" ? JSON.parse(raw) : raw;
+		} catch (_err) {
+			return fallback;
+		}
+	};
+	for (const [key, value] of Object.entries(data)) {
+		if (key.startsWith(LEGACY_RATING_PREFIX)) {
+			const username = key.slice(LEGACY_RATING_PREFIX.length);
+			const rating = typeof value === "number" ? value : Number(value);
+			if (!Number.isNaN(rating)) state.ratings[username] = rating;
+		} else if (key.startsWith(LEGACY_COLOR_PREFIX)) {
+			const tagName = key.slice(LEGACY_COLOR_PREFIX.length);
+			const color = parseJSON(value, null);
+			if (color?.bgColor) {
+				state.colors[tagName] = {
+					bgColor: color.bgColor,
+					textColor: color.textColor || "black",
+				};
+			}
+		}
+	}
+	for (const [key, value] of Object.entries(data)) {
+		if (!key.startsWith(LEGACY_TAGS_PREFIX)) continue;
+		const username = key.slice(LEGACY_TAGS_PREFIX.length);
+		const legacyTags = parseJSON(value, []);
+		if (!Array.isArray(legacyTags)) continue;
+		const names = [];
+		for (const t of legacyTags) {
+			if (!t || typeof t.value !== "string") continue;
+			names.push(t.value);
+			if (!state.colors[t.value] && t.bgColor) {
+				state.colors[t.value] = {
+					bgColor: t.bgColor,
+					textColor: t.textColor || "black",
+				};
+			}
+		}
+		state.tags[username] = names;
+	}
+	return state;
+}
+
+// Normalized export shape. Stable across versions so old backups stay
+// interoperable. Cache is intentionally dropped — it's perf scaffolding,
+// not user data, and shouldn't bloat export files.
+function stateToExport(state) {
+	const customTags = {};
+	for (const [tagName, info] of Object.entries(state.colors || {})) {
+		customTags[tagName] = {
+			bgColor: info.bgColor,
+			textColor: info.textColor,
+		};
+	}
+	const users = {};
+	const allUsernames = new Set([
+		...Object.keys(state.ratings || {}),
+		...Object.keys(state.tags || {}),
+	]);
+	for (const username of allUsernames) {
+		const rating = state.ratings[username] || 0;
+		const tags = state.tags[username] || [];
+		if (rating === 0 && tags.length === 0) continue;
+		users[username] = { rating, tags: tags.slice() };
+	}
+	return { customTags, users };
+}
+
+// Node test export. In the userscript environment `module` is undefined and
+// this block is a no-op.
+if (typeof module !== "undefined" && module.exports) {
+	module.exports = {
+		timeSince,
+		createStore,
+		migrateLegacyKeys,
+		parseImport,
+		stateToExport,
+	};
+}
+
+// =============================================================================
+// Browser bootstrap. Only runs inside a userscript runtime that exposes the
+// GM_* APIs. Everything below here is free to touch the DOM.
+// =============================================================================
+
+if (typeof GM_addStyle !== "undefined") {
 	GM_addStyle(`
     .hn-post-layout {
       display: grid;
@@ -22,9 +347,10 @@
       margin: 5px 0;
       width: 100%;
     }
-    .comment {
-      padding-top: 10px;
-    }
+    .comment { padding-top: 10px; }
+    /* Hide the stray <br>s HN puts above comment bodies.
+       :has() is supported in all current evergreen browsers. */
+    br:has(+ div.comment) { display: none; }
     .hn-username {
       font-weight: 700;
       font-size: 1.15em;
@@ -42,21 +368,17 @@
       margin-left: 4px;
       white-space: nowrap;
     }
+    .hn-info-pending { opacity: 0.4; }
     .hn-tag-container {
       display: flex;
       flex-direction: column;
       grid-column: 2;
-      grid-row: 1 / span 3;
       padding-left: 10px;
       margin-left: 10px;
     }
     .hn-tag-group {
       display: flex;
       flex-direction: column;
-    }
-    .hn-tags-row {
-      display: flex;
-      align-items: center;
     }
     .hn-tag {
       padding: 3px 6px;
@@ -70,9 +392,7 @@
       justify-content: space-between;
       width: fit-content;
     }
-    .hn-tag-text {
-      margin-right: 5px;
-    }
+    .hn-tag-text { margin-right: 5px; }
     .hn-tag-icons {
       display: flex;
       align-items: center;
@@ -89,9 +409,7 @@
       border-radius: 50%;
       background-color: rgba(255, 255, 255, 0.3);
     }
-    .hn-tag-icon:hover {
-      background-color: rgba(255, 255, 255, 0.6);
-    }
+    .hn-tag-icon:hover { background-color: rgba(255, 255, 255, 0.6); }
     .hn-tag-input {
       font-size: 0.8em;
       margin-left: 4px;
@@ -143,6 +461,10 @@
       border-top-left-radius: 3px;
       border-bottom-left-radius: 3px;
     }
+    .hn-toolbar-buttons {
+      display: flex;
+      padding-left: 8px;
+    }
     .hn-toolbar-btn {
       background-color: #ff6600;
       color: white;
@@ -153,781 +475,371 @@
       cursor: pointer;
       font-weight: bold;
     }
-    .hn-toolbar-btn:hover {
-      background-color: #ff8533;
-    }
+    .hn-toolbar-btn:hover { background-color: #ff8533; }
   `);
 
-	// Cache for user data to prevent duplicate API calls
-	const userDataCache = new Map();
+	// How long a cached {created, karma} pair is considered fresh. Karma drifts
+	// slowly; 6h means a repeat-visitor sees a fully-rendered page with zero
+	// network requests for users they've already seen today.
+	const USER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+	// Per-request ceiling. Without this, GM_xmlhttpRequest can hang forever and
+	// the page never finishes rendering. Firebase's HN endpoint is fast in the
+	// common case; 8s is generous.
+	const USER_FETCH_TIMEOUT_MS = 8000;
 
-	// DOM Selectors
-	const getUsernameElements = () =>
-		Array.from(document.querySelectorAll(".hnuser"));
-	const getUsernames = () => getUsernameElements().map((el) => el.textContent);
-
-	// Helper to find the correct parent for insertion
-	const findCommentParent = (usernameEl) => {
-		// Try to find comhead first
-		const comhead = usernameEl.closest(".comhead");
-		if (comhead) return comhead;
-
-		// Fallback to direct parent
-		return usernameEl.parentElement;
+	// Adapter from GM_* to the {get, set, list} interface the store and
+	// migration expect.
+	const backend = {
+		get: (key) => GM_getValue(key, undefined),
+		set: (key, value) => GM_setValue(key, value),
+		list: () => (typeof GM_listValues === "function" ? GM_listValues() : []),
 	};
 
-	// API Data Handling
-	const fetchUserData = async (username) => {
-		// Return cached data if available
-		if (userDataCache.has(username)) {
-			return userDataCache.get(username);
-		}
+	migrateLegacyKeys(backend);
+	const store = createStore(backend);
 
-		return new Promise((resolve, reject) => {
+	// Dedupe concurrent fetches for the same username (common: someone comments
+	// 10 times in a thread). Separate from the persistent cache because these
+	// are in-flight promises, not values.
+	const inflight = new Map();
+
+	function fetchUser(username) {
+		const cached = store.getCachedUser(username, Date.now(), USER_CACHE_TTL_MS);
+		if (cached) return Promise.resolve(cached);
+		if (inflight.has(username)) return inflight.get(username);
+
+		const promise = new Promise((resolve) => {
 			GM_xmlhttpRequest({
 				method: "GET",
 				url: `https://hacker-news.firebaseio.com/v0/user/${username}.json`,
+				timeout: USER_FETCH_TIMEOUT_MS,
 				onload: (response) => {
-					if (response.status === 200 && response.responseText) {
-						try {
-							const data = JSON.parse(response.responseText);
-							userDataCache.set(username, data);
-							resolve(data);
-						} catch (err) {
-							reject(new Error(`Failed to parse response: ${err.message}`));
+					if (response.status !== 200 || !response.responseText) {
+						resolve(null);
+						return;
+					}
+					try {
+						const data = JSON.parse(response.responseText);
+						if (data && typeof data.created === "number") {
+							store.setCachedUser(
+								username,
+								{ created: data.created, karma: data.karma },
+								Date.now(),
+							);
+							resolve({ created: data.created, karma: data.karma });
+						} else {
+							resolve(null);
 						}
-					} else {
-						reject(new Error(`Error fetching user data: ${response.status}`));
+					} catch (_err) {
+						resolve(null);
 					}
 				},
-				onerror: (error) => {
-					reject(
-						new Error(`Request failed: ${error.statusText || "Unknown error"}`),
-					);
-				},
-				ontimeout: () => {
-					reject(new Error("Request timed out"));
-				},
+				onerror: () => resolve(null),
+				ontimeout: () => resolve(null),
 			});
+		}).finally(() => {
+			inflight.delete(username);
 		});
-	};
+		inflight.set(username, promise);
+		return promise;
+	}
 
-	// Time Formatting
-	const timeSince = (unixTimestamp) => {
-		const seconds = Math.floor(new Date().getTime() / 1000 - unixTimestamp);
-		const interval = Math.floor(seconds / 31536000);
+	// Pastel HSL. The lightness floor (75%) guarantees black text is always the
+	// high-contrast choice, so we don't need a luminance calculator.
+	function randomPastelColor() {
+		const r = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1) + lo);
+		return `hsl(${r(0, 359)}, ${r(30, 100)}%, ${r(75, 95)}%)`;
+	}
 
-		if (interval >= 1) {
-			return `${interval} year${interval === 1 ? "" : "s"}`;
+	function ensureTagColor(tagName) {
+		const existing = store.getTagColor(tagName);
+		if (existing?.bgColor) return existing;
+		const color = { bgColor: randomPastelColor(), textColor: "black" };
+		store.setTagColor(tagName, color);
+		return color;
+	}
+
+	// Tiny element factory. Accepts text content and event handlers but
+	// intentionally does NOT accept innerHTML — all text goes through
+	// textContent so it can't become an XSS foothold even if we later pass a
+	// username or tag name through it.
+	function h(tag, props = {}, children = []) {
+		const node = document.createElement(tag);
+		for (const [k, v] of Object.entries(props)) {
+			if (k === "class") node.className = v;
+			else if (k === "text") node.textContent = v;
+			else if (k.startsWith("on") && typeof v === "function") {
+				node.addEventListener(k.slice(2).toLowerCase(), v);
+			} else {
+				node[k] = v;
+			}
 		}
-
-		const intervalMonths = Math.floor(seconds / 2592000);
-		if (intervalMonths >= 1) {
-			return `${intervalMonths} month${intervalMonths === 1 ? "" : "s"}`;
+		for (const child of children) {
+			if (child) node.appendChild(child);
 		}
+		return node;
+	}
 
-		const intervalDays = Math.floor(seconds / 86400);
-		return `${intervalDays} day${intervalDays === 1 ? "" : "s"}`;
-	};
-
-	// Storage Helpers
-	const storage = {
-		// Author Ratings
-		saveAuthorRating: (username, rating) => {
-			GM_setValue(`hn_author_rating_${username}`, rating);
-		},
-
-		loadAuthorRating: (username) => {
-			return GM_getValue(`hn_author_rating_${username}`, 0);
-		},
-
-		// Tags
-		saveTags: (username, tags) => {
-			GM_setValue(`hn_custom_tags_${username}`, JSON.stringify(tags));
-		},
-
-		loadTags: (username) => {
-			try {
-				return JSON.parse(GM_getValue(`hn_custom_tags_${username}`, "[]"));
-			} catch (e) {
-				console.error("Failed to parse tags:", e);
-				return [];
-			}
-		},
-
-		// Tag Colors
-		saveTagColor: (tag, bgColor, textColor) => {
-			GM_setValue(
-				`hn_custom_tag_color_${tag}`,
-				JSON.stringify({ bgColor, textColor }),
-			);
-		},
-
-		loadTagColor: (tag) => {
-			try {
-				return JSON.parse(GM_getValue(`hn_custom_tag_color_${tag}`, "{}"));
-			} catch (e) {
-				console.error("Failed to parse tag color:", e);
-				return {};
-			}
-		},
-	};
-
-	// Color Utilities
-	const colorUtils = {
-		randomLightColor: () => {
-			const randomInt = (min, max) =>
-				Math.floor(Math.random() * (max - min + 1) + min);
-			return `hsl(${randomInt(0, 359)}, ${randomInt(30, 100)}%, ${randomInt(75, 95)}%)`;
-		},
-
-		getContrastColor: (bgColor) => {
-			const hslToRgb = (h, s, l) => {
-				let r;
-				let g;
-				let b;
-
-				const hueToRgb = (p, q, t) => {
-					let tValue = t;
-					if (tValue < 0) tValue += 1;
-					if (tValue > 1) tValue -= 1;
-					if (tValue < 1 / 6) return p + (q - p) * 6 * tValue;
-					if (tValue < 1 / 2) return q;
-					if (tValue < 2 / 3) return p + (q - p) * (2 / 3 - tValue) * 6;
-					return p;
-				};
-
-				if (s === 0) {
-					r = g = b = l;
-				} else {
-					const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-					const p = 2 * l - q;
-					r = hueToRgb(p, q, h + 1 / 3);
-					g = hueToRgb(p, q, h);
-					b = hueToRgb(p, q, h - 1 / 3);
-				}
-
-				return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-			};
-
-			const getLuminance = (rgb) => {
-				const r = rgb[0] / 255;
-				const g = rgb[1] / 255;
-				const b = rgb[2] / 255;
-
-				const max = Math.max(r, g, b);
-				const min = Math.min(r, g, b);
-
-				return (max + min) / 2;
-			};
-
-			// Extract HSL values from string
-			const hslMatch = bgColor.match(/\d+/g);
-			if (!hslMatch || hslMatch.length < 3) {
-				return "black"; // Default to black if parsing fails
-			}
-
-			const hsl = hslMatch.map(Number);
-			hsl[0] /= 360;
-			hsl[1] /= 100;
-			hsl[2] /= 100;
-
-			const rgb = hslToRgb(...hsl);
-			const luminance = getLuminance(rgb);
-
-			return luminance > 0.5 ? "black" : "white";
-		},
-	};
-
-	// UI Components
-	const ui = {
-		createRatingControls: (username) => {
-			const ratingContainer = document.createElement("span");
-			ratingContainer.className = "hn-rating-container";
-
-			const upArrow = document.createElement("button");
-			upArrow.textContent = "▲";
-			upArrow.className = "hn-rating-btn";
-
-			const downArrow = document.createElement("button");
-			downArrow.textContent = "▼";
-			downArrow.className = "hn-rating-btn";
-
-			const ratingDisplay = document.createElement("span");
-			ratingDisplay.textContent = storage.loadAuthorRating(username);
-			ratingDisplay.className = "hn-rating-display";
-
-			// Prevent focus on buttons so spacebar doesn't trigger them
-			upArrow.tabIndex = -1;
-			downArrow.tabIndex = -1;
-
-			upArrow.addEventListener("click", (e) => {
-				e.preventDefault();
-				// Explicitly blur to remove focus after click
-				upArrow.blur();
-				const currentRating = Number.parseInt(ratingDisplay.textContent, 10);
-				const newRating = currentRating + 1;
-				storage.saveAuthorRating(username, newRating);
-				ratingDisplay.textContent = newRating;
+	function renderRatingControls(username) {
+		const display = h("span", {
+			class: "hn-rating-display",
+			text: String(store.getRating(username)),
+		});
+		const mkBtn = (glyph, delta) =>
+			h("button", {
+				class: "hn-rating-btn",
+				text: glyph,
+				tabIndex: -1,
+				onclick: (e) => {
+					e.preventDefault();
+					e.currentTarget.blur();
+					const next = store.getRating(username) + delta;
+					store.setRating(username, next);
+					display.textContent = String(next);
+				},
 			});
+		return h("span", { class: "hn-rating-container" }, [
+			mkBtn("▲", 1),
+			mkBtn("▼", -1),
+			display,
+		]);
+	}
 
-			downArrow.addEventListener("click", (e) => {
-				e.preventDefault();
-				// Explicitly blur to remove focus after click
-				downArrow.blur();
-				const currentRating = Number.parseInt(ratingDisplay.textContent, 10);
-				const newRating = currentRating - 1;
-				storage.saveAuthorRating(username, newRating);
-				ratingDisplay.textContent = newRating;
-			});
+	// Renders the tag list for a user into `container` (clearing first). Called
+	// on initial render and after any tag edit/remove so we don't need a full
+	// page reload.
+	function renderTagGroup(username, container) {
+		container.replaceChildren();
+		for (const tag of store.getUserTags(username)) {
+			container.appendChild(renderTagSpan(username, tag, container));
+		}
+	}
 
-			ratingContainer.append(upArrow, downArrow, ratingDisplay);
-			return ratingContainer;
-		},
-
-		createTagInput: (username) => {
-			const tags = storage.loadTags(username);
-			const input = document.createElement("input");
-			input.type = "text";
-			input.value = tags.map((tag) => tag.value).join(", ");
-			input.placeholder = "Add tags (comma separated)";
-			input.className = "hn-tag-input";
-
-			// Debounce function to limit the frequency of updates
-			let debounceTimeout;
-			const handleTagChange = () => {
-				clearTimeout(debounceTimeout);
-				debounceTimeout = setTimeout(() => {
-					const newTags = input.value
-						.split(",")
-						.map((tag) => tag.trim())
-						.filter((tag) => tag.length > 0);
-
-					const updatedTags = newTags.map((value) => {
-						const existingTag = tags.find((tag) => tag.value === value);
-						if (existingTag) {
-							return existingTag;
-						}
-
-						let tagColors = storage.loadTagColor(value);
-						if (!tagColors.bgColor || !tagColors.textColor) {
-							const bgColor = colorUtils.randomLightColor();
-							const textColor = colorUtils.getContrastColor(bgColor);
-							const updatedTagColors = { bgColor, textColor };
-							storage.saveTagColor(value, bgColor, textColor);
-							tagColors = updatedTagColors;
-						}
-						return {
-							value,
-							bgColor: tagColors.bgColor,
-							textColor: tagColors.textColor,
-						};
-					});
-
-					storage.saveTags(username, updatedTags);
-				}, 500); // 500ms debounce
-			};
-
-			input.addEventListener("change", handleTagChange);
-			input.addEventListener("input", handleTagChange);
-
-			return input;
-		},
-
-		createTagSpan: (tag, username) => {
-			const tagSpan = document.createElement("div");
-			tagSpan.className = "hn-tag";
-			tagSpan.style.backgroundColor = tag.bgColor;
-			tagSpan.style.color = tag.textColor;
-
-			// Tag text
-			const tagText = document.createElement("span");
-			tagText.textContent = tag.value;
-			tagText.className = "hn-tag-text";
-
-			// Icons container
-			const iconsContainer = document.createElement("div");
-			iconsContainer.className = "hn-tag-icons";
-
-			// Edit icon
-			const editIcon = document.createElement("span");
-			editIcon.innerHTML = "✏️";
-			editIcon.title = "Edit tag";
-			editIcon.className = "hn-tag-icon";
-			editIcon.addEventListener("click", (e) => {
+	function renderTagSpan(username, tag, tagGroupEl) {
+		const editIcon = h("span", {
+			class: "hn-tag-icon",
+			title: "Edit tag",
+			text: "\u270F\uFE0F", // ✏️
+			onclick: (e) => {
 				e.stopPropagation();
 				const newName = prompt("Edit tag name:", tag.value);
-				if (newName && newName !== tag.value) {
-					// Get current tags
-					const currentTags = storage.loadTags(username);
-					// Update the specific tag
-					const updatedTags = currentTags.map((t) =>
-						t.value === tag.value ? { ...t, value: newName } : t,
-					);
-					// Save updated tags
-					storage.saveTags(username, updatedTags);
-					// Refresh the display
-					location.reload();
-				}
-			});
-
-			// Remove icon
-			const removeIcon = document.createElement("span");
-			removeIcon.innerHTML = "✖";
-			removeIcon.title = "Remove tag";
-			removeIcon.className = "hn-tag-icon";
-			removeIcon.addEventListener("click", (e) => {
+				if (!newName || newName === tag.value) return;
+				const current = store.getUserTags(username);
+				const color = ensureTagColor(newName);
+				const updated = current.map((t) =>
+					t.value === tag.value
+						? {
+								value: newName,
+								bgColor: color.bgColor,
+								textColor: color.textColor,
+							}
+						: t,
+				);
+				store.setUserTags(username, updated);
+				renderTagGroup(username, tagGroupEl);
+			},
+		});
+		const removeIcon = h("span", {
+			class: "hn-tag-icon",
+			title: "Remove tag",
+			text: "\u2716", // ✖
+			onclick: (e) => {
 				e.stopPropagation();
-				if (confirm(`Remove tag "${tag.value}"?`)) {
-					// Get current tags
-					const currentTags = storage.loadTags(username);
-					// Filter out the removed tag
-					const updatedTags = currentTags.filter((t) => t.value !== tag.value);
-					// Save updated tags
-					storage.saveTags(username, updatedTags);
-					// Refresh the display
-					location.reload();
-				}
-			});
-
-			// Add icons to container
-			iconsContainer.appendChild(editIcon);
-			iconsContainer.appendChild(removeIcon);
-
-			// Add text and icons to tag
-			tagSpan.appendChild(tagText);
-			tagSpan.appendChild(iconsContainer);
-
-			return tagSpan;
-		},
-
-		createAccountInfoSpan: (created, karma) => {
-			const ageSpan = document.createElement("span");
-			ageSpan.textContent = `(${timeSince(created)} old, ${karma} karma)`;
-			ageSpan.className = "hn-info";
-
-			return ageSpan;
-		},
-	};
-
-	// Main functionality
-	const displayAccountInfoAndTags = async () => {
-		const usernameElements = getUsernameElements();
-		const uniqueUsernames = [...new Set(getUsernames())];
-
-		try {
-			// Fetch all user data in parallel
-			const userDataPromises = uniqueUsernames.map((username) =>
-				fetchUserData(username).catch((err) => {
-					console.error(`Error fetching data for ${username}:`, err);
-					return null; // Return null instead of rejecting to allow other requests to complete
-				}),
-			);
-
-			const userDataList = await Promise.all(userDataPromises);
-			const userDataMap = new Map();
-
-			// Create a map for faster lookups
-			for (const data of userDataList) {
-				if (data?.id) {
-					userDataMap.set(data.id, data);
-				}
-			}
-
-			// Update the DOM
-			for (const usernameEl of usernameElements) {
-				const username = usernameEl.textContent;
-				const userData = userDataMap.get(username);
-
-				if (!userData) continue; // Skip if no data available
-
-				const { created, karma } = userData;
-
-				// Find the right parent for insertion
-				const parentElement = findCommentParent(usernameEl);
-				if (!parentElement) continue;
-
-				// Create the main layout container
-				const layoutContainer = document.createElement("div");
-				layoutContainer.className = "hn-post-layout";
-
-				// Create main row for username, age/karma, rating, and tag input
-				const mainRow = document.createElement("div");
-				mainRow.className = "hn-main-row";
-
-				// Create and append account info
-				const ageSpan = ui.createAccountInfoSpan(created, karma);
-
-				// Create rating controls
-				const ratingControls = ui.createRatingControls(username);
-
-				// Create tag input
-				const tagInput = ui.createTagInput(username);
-
-				// Add username element (clone it)
-				const usernameClone = usernameEl.cloneNode(true);
-				usernameClone.className += " hn-username";
-				mainRow.appendChild(usernameClone);
-
-				// Add account info, rating controls and tag input
-				mainRow.appendChild(ageSpan);
-				mainRow.appendChild(ratingControls);
-				mainRow.appendChild(tagInput);
-
-				// Add the main row to the layout container
-				layoutContainer.appendChild(mainRow);
-
-				// Create container for tags (right column)
-				const tagContainer = document.createElement("div");
-				tagContainer.className = "hn-tag-container";
-
-				// Get all tags
-				const tags = storage.loadTags(username);
-
-				// Create a group for all tags
-				const tagGroup = document.createElement("div");
-				tagGroup.className = "hn-tag-group";
-
-				// Add all tags vertically in the group
-				for (let i = 0; i < tags.length; i++) {
-					const tagSpan = ui.createTagSpan(tags[i], username);
-					tagGroup.appendChild(tagSpan);
-				}
-
-				// Add tag group to container
-				tagContainer.appendChild(tagGroup);
-
-				// Add the tag container to the layout
-				layoutContainer.appendChild(tagContainer);
-
-				// Insert the layout after the parent element
-				parentElement.parentNode.insertBefore(
-					layoutContainer,
-					parentElement.nextSibling,
+				if (!confirm(`Remove tag "${tag.value}"?`)) return;
+				const current = store.getUserTags(username);
+				store.setUserTags(
+					username,
+					current.filter((t) => t.value !== tag.value),
 				);
+				renderTagGroup(username, tagGroupEl);
+			},
+		});
 
-				// Hide the original username to avoid duplication
-				usernameEl.style.display = "none";
-			}
-		} catch (error) {
-			console.error("Error in displayAccountInfoAndTags:", error);
-		}
-	};
+		const span = h("div", { class: "hn-tag" }, [
+			h("span", { class: "hn-tag-text", text: tag.value }),
+			h("div", { class: "hn-tag-icons" }, [editIcon, removeIcon]),
+		]);
+		span.style.backgroundColor = tag.bgColor || "";
+		span.style.color = tag.textColor || "black";
+		return span;
+	}
 
-	// State Management
-	const stateManagement = {
-		exportState: () => {
-			// Create normalized data structure
-			const exportData = {
-				customTags: {},
-				users: {},
-			};
+	function renderTagInput(username, tagGroupEl) {
+		const currentNames = store.getUserTags(username).map((t) => t.value);
+		const input = h("input", {
+			type: "text",
+			class: "hn-tag-input",
+			value: currentNames.join(", "),
+			placeholder: "Add tags (comma separated)",
+		});
 
-			// Get all unique tag definitions and users
-			let allTagDefinitions = new Map();
-
-			// Function to process user data
-			const processUserData = (username) => {
-				// Get user rating
-				const rating = GM_getValue(`hn_author_rating_${username}`, 0);
-
-				// Get user tags
-				const tagsRaw = GM_getValue(`hn_custom_tags_${username}`, "[]");
-				let tags = [];
-
-				try {
-					const parsedTags = JSON.parse(tagsRaw);
-
-					// Add each tag to the global tag definitions if not already there
-					parsedTags.forEach((tag) => {
-						const tagName = tag.value;
-
-						// Add to tag definitions if not already there
-						if (!allTagDefinitions.has(tagName)) {
-							const tagColorData = GM_getValue(
-								`hn_custom_tag_color_${tagName}`,
-								"{}",
-							);
-							let colorInfo;
-
-							try {
-								colorInfo = JSON.parse(tagColorData);
-							} catch (e) {
-								colorInfo = {
-									bgColor: tag.bgColor || colorUtils.randomLightColor(),
-									textColor: tag.textColor || "black",
-								};
-							}
-
-							allTagDefinitions.set(tagName, {
-								bgColor: colorInfo.bgColor,
-								textColor: colorInfo.textColor,
-							});
-						}
-
-						// Add tag reference to user's tags
-						tags.push(tagName);
-					});
-				} catch (e) {
-					console.error(`Failed to parse tags for ${username}:`, e);
-				}
-
-				// Only add user if they have rating or tags
-				if (rating !== 0 || tags.length > 0) {
-					exportData.users[username] = {
-						rating: rating,
-						tags: tags,
+		let debounce;
+		input.addEventListener("input", () => {
+			clearTimeout(debounce);
+			debounce = setTimeout(() => {
+				const names = input.value
+					.split(",")
+					.map((t) => t.trim())
+					.filter((t) => t.length > 0);
+				const updated = names.map((name) => {
+					const color = ensureTagColor(name);
+					return {
+						value: name,
+						bgColor: color.bgColor,
+						textColor: color.textColor,
 					};
-				}
-			};
-
-			// Process all users from storage
-			if (typeof GM_listValues === "function") {
-				const allKeys = GM_listValues();
-
-				// First, find all user ratings and custom tags
-				const userSet = new Set();
-
-				for (const key of allKeys) {
-					// Extract usernames from rating keys
-					if (key.startsWith("hn_author_rating_")) {
-						const username = key.replace("hn_author_rating_", "");
-						userSet.add(username);
-					}
-					// Extract usernames from tag keys
-					else if (key.startsWith("hn_custom_tags_")) {
-						const username = key.replace("hn_custom_tags_", "");
-						userSet.add(username);
-					}
-				}
-
-				// Process each user
-				userSet.forEach((username) => {
-					processUserData(username);
 				});
+				store.setUserTags(username, updated);
+				renderTagGroup(username, tagGroupEl);
+			}, 500);
+		});
+		return input;
+	}
 
-				// Extract all tag colors for completeness
-				for (const key of allKeys) {
-					if (key.startsWith("hn_custom_tag_color_")) {
-						const tagName = key.replace("hn_custom_tag_color_", "");
+	function renderAccountInfo(created, karma) {
+		const now = Math.floor(Date.now() / 1000);
+		return h("span", {
+			class: "hn-info",
+			text: `(${timeSince(created, now)} old, ${karma} karma)`,
+		});
+	}
 
-						// Only add if not already processed
-						if (!allTagDefinitions.has(tagName)) {
-							const tagColorData = GM_getValue(key, "{}");
+	function findCommentParent(usernameEl) {
+		return usernameEl.closest(".comhead") || usernameEl.parentElement;
+	}
 
-							try {
-								const colorInfo = JSON.parse(tagColorData);
-								if (colorInfo.bgColor) {
-									allTagDefinitions.set(tagName, {
-										bgColor: colorInfo.bgColor,
-										textColor: colorInfo.textColor || "black",
-									});
-								}
-							} catch (e) {
-								console.error(`Failed to parse tag color for ${tagName}:`, e);
-							}
-						}
-					}
-				}
-			} else {
-				// If GM_listValues is not available, use current page data
-				console.warn(
-					"GM_listValues is not available. Export may be incomplete.",
-				);
-				const usernames = getUsernames();
+	// Skeleton-first: every row is built and inserted synchronously from the
+	// store. The age/karma blurb gets filled in as each fetch resolves, so a
+	// slow or hung request can't block the rest of the page.
+	function renderAllUsernames() {
+		const usernameElements = Array.from(document.querySelectorAll(".hnuser"));
 
-				for (const username of usernames) {
-					processUserData(username);
-				}
-			}
+		for (const usernameEl of usernameElements) {
+			const username = usernameEl.textContent;
+			const parent = findCommentParent(usernameEl);
+			if (!parent) continue;
 
-			// Convert tag definitions Map to object
-			allTagDefinitions.forEach((tagInfo, tagName) => {
-				exportData.customTags[tagName] = tagInfo;
+			const tagGroup = h("div", { class: "hn-tag-group" });
+			renderTagGroup(username, tagGroup);
+
+			const usernameClone = usernameEl.cloneNode(true);
+			usernameClone.className = `${usernameClone.className} hn-username`.trim();
+
+			const infoSlot = h("span", {
+				class: "hn-info hn-info-pending",
+				text: "(loading…)",
 			});
 
-			// Create a blob and trigger download
-			const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-				type: "application/json",
+			const mainRow = h("div", { class: "hn-main-row" }, [
+				usernameClone,
+				infoSlot,
+				renderRatingControls(username),
+				renderTagInput(username, tagGroup),
+			]);
+			const tagContainer = h("div", { class: "hn-tag-container" }, [tagGroup]);
+			const layout = h("div", { class: "hn-post-layout" }, [
+				mainRow,
+				tagContainer,
+			]);
+
+			parent.parentNode.insertBefore(layout, parent.nextSibling);
+			usernameEl.style.display = "none";
+
+			// Populate the info slot asynchronously. Cached users resolve on the
+			// microtask queue (effectively synchronous). Failed or timed-out
+			// fetches remove the slot rather than leaving a "loading…" ghost.
+			fetchUser(username).then((data) => {
+				if (data) {
+					infoSlot.replaceWith(renderAccountInfo(data.created, data.karma));
+				} else {
+					infoSlot.remove();
+				}
 			});
-			const url = URL.createObjectURL(blob);
+		}
+	}
 
-			// Create a link element and trigger a click
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = `hn-user-data-${new Date().toISOString().split("T")[0]}.json`;
-			document.body.appendChild(a);
-			a.click();
+	function exportState() {
+		const data = stateToExport(store._snapshot());
+		const blob = new Blob([JSON.stringify(data, null, 2)], {
+			type: "application/json",
+		});
+		const url = URL.createObjectURL(blob);
+		const a = h("a", {
+			href: url,
+			download: `hn-user-data-${new Date().toISOString().split("T")[0]}.json`,
+		});
+		document.body.appendChild(a);
+		a.click();
+		setTimeout(() => {
+			a.remove();
+			URL.revokeObjectURL(url);
+		}, 100);
+	}
 
-			// Clean up
-			setTimeout(() => {
-				document.body.removeChild(a);
-				URL.revokeObjectURL(url);
-			}, 100);
-		},
-
-		importState: () => {
-			// Create a file input element
-			const input = document.createElement("input");
-			input.type = "file";
-			input.accept = ".json";
-
-			input.onchange = (event) => {
-				const file = event.target.files[0];
-				if (!file) return;
-
-				const reader = new FileReader();
-				reader.onload = (e) => {
-					try {
-						const importedData = JSON.parse(e.target.result);
-
-						// Clear existing data if GM_listValues is available
-						if (typeof GM_listValues === "function") {
-							const allKeys = GM_listValues();
-							for (const key of allKeys) {
-								if (key.startsWith("hn_")) {
-									if (typeof GM_deleteValue === "function") {
-										GM_deleteValue(key);
-									}
-								}
-							}
-						}
-
-						// Handle both the new format and legacy format
-						if (importedData.customTags && importedData.users) {
-							// New format - Process tag definitions
-							for (const [tagName, tagInfo] of Object.entries(
-								importedData.customTags,
-							)) {
-								GM_setValue(
-									`hn_custom_tag_color_${tagName}`,
-									JSON.stringify({
-										bgColor: tagInfo.bgColor,
-										textColor: tagInfo.textColor,
-									}),
-								);
-							}
-
-							// Process user data
-							for (const [username, userData] of Object.entries(
-								importedData.users,
-							)) {
-								// Save user rating
-								GM_setValue(`hn_author_rating_${username}`, userData.rating);
-
-								// Save user tags
-								const userTags = userData.tags.map((tagName) => {
-									const tagInfo = importedData.customTags[tagName];
-									return {
-										value: tagName,
-										bgColor: tagInfo?.bgColor || colorUtils.randomLightColor(),
-										textColor: tagInfo?.textColor || "black",
-									};
-								});
-
-								GM_setValue(
-									`hn_custom_tags_${username}`,
-									JSON.stringify(userTags),
-								);
-							}
-						} else {
-							// Legacy format - directly copy values
-							for (const [key, value] of Object.entries(importedData)) {
-								if (key.startsWith("hn_")) {
-									GM_setValue(key, value);
-								}
-							}
-						}
-
-						// Refresh the page to show the new data
-						alert("Data imported successfully! The page will now reload.");
-						location.reload();
-					} catch (error) {
-						alert(`Error importing data: ${error.message}`);
-						console.error("Error importing data:", error);
-					}
-				};
-
-				reader.readAsText(file);
+	function importState() {
+		const input = h("input", { type: "file", accept: ".json" });
+		input.addEventListener("change", (event) => {
+			const file = event.target.files[0];
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				try {
+					const raw = JSON.parse(e.target.result);
+					const parsed = parseImport(raw);
+					// Write the consolidated blob directly and reload so the page
+					// rebuilds from a fresh store.
+					backend.set(STATE_KEY, JSON.stringify(parsed));
+					alert("Data imported successfully! The page will now reload.");
+					location.reload();
+				} catch (error) {
+					alert(`Error importing data: ${error.message}`);
+					console.error("Error importing data:", error);
+				}
 			};
+			reader.readAsText(file);
+		});
+		input.click();
+	}
 
-			// Trigger file selection
-			input.click();
-		},
-	};
-
-	// Toolbar UI
-	const createToolbar = () => {
-		const toolbar = document.createElement("div");
-		toolbar.className = "hn-toolbar";
-
-		// Add drag handle
-		const dragHandle = document.createElement("div");
-		dragHandle.className = "hn-drag-handle";
-
-		const saveButton = document.createElement("button");
-		saveButton.textContent = "Save state";
-		saveButton.className = "hn-toolbar-btn";
-		saveButton.addEventListener("click", stateManagement.exportState);
-
-		const restoreButton = document.createElement("button");
-		restoreButton.textContent = "Restore state";
-		restoreButton.className = "hn-toolbar-btn";
-		restoreButton.addEventListener("click", stateManagement.importState);
-
-		// Create a container for buttons with padding to match right side spacing
-		const buttonContainer = document.createElement("div");
-		buttonContainer.style.display = "flex";
-		buttonContainer.style.paddingLeft = "8px"; // Match the right padding
-
-		buttonContainer.append(saveButton, restoreButton);
-		toolbar.append(dragHandle, buttonContainer);
+	function createToolbar() {
+		const dragHandle = h("div", { class: "hn-drag-handle" });
+		const buttons = h("div", { class: "hn-toolbar-buttons" }, [
+			h("button", {
+				class: "hn-toolbar-btn",
+				text: "Save state",
+				onclick: exportState,
+			}),
+			h("button", {
+				class: "hn-toolbar-btn",
+				text: "Restore state",
+				onclick: importState,
+			}),
+		]);
+		const toolbar = h("div", { class: "hn-toolbar" }, [dragHandle, buttons]);
 		document.body.appendChild(toolbar);
 
-		// Add drag functionality
-		let isDragging = false;
-		let offsetX, offsetY;
-
+		// Drag listeners live only for the duration of a drag, rather than
+		// sitting on document forever.
 		dragHandle.addEventListener("mousedown", (e) => {
-			isDragging = true;
 			const rect = toolbar.getBoundingClientRect();
-			offsetX = e.clientX - rect.left;
-			offsetY = e.clientY - rect.top;
-
-			// Prevent text selection during drag
+			const offsetX = e.clientX - rect.left;
+			const offsetY = e.clientY - rect.top;
 			e.preventDefault();
+
+			const onMove = (ev) => {
+				toolbar.style.left = `${ev.clientX - offsetX}px`;
+				toolbar.style.top = `${ev.clientY - offsetY}px`;
+				toolbar.style.right = "auto";
+			};
+			const onUp = () => {
+				document.removeEventListener("mousemove", onMove);
+				document.removeEventListener("mouseup", onUp);
+			};
+			document.addEventListener("mousemove", onMove);
+			document.addEventListener("mouseup", onUp);
 		});
+	}
 
-		document.addEventListener("mousemove", (e) => {
-			if (!isDragging) return;
-
-			const left = e.clientX - offsetX;
-			const top = e.clientY - offsetY;
-
-			// Update the toolbar position
-			toolbar.style.left = `${left}px`;
-			toolbar.style.top = `${top}px`;
-			toolbar.style.right = "auto"; // Remove the default right positioning
-		});
-
-		document.addEventListener("mouseup", () => {
-			isDragging = false;
-		});
-	};
-
-	// Remove <br/> tags before comments
-	const removeBrBeforeComments = () => {
-		const comments = document.querySelectorAll("div.comment");
-		comments.forEach((comment) => {
-			const prevSibling = comment.previousSibling;
-			if (prevSibling && prevSibling.nodeName === "BR") {
-				prevSibling.parentNode.removeChild(prevSibling);
-			}
-		});
-	};
-
-	// Initialize
-	displayAccountInfoAndTags();
+	renderAllUsernames();
 	createToolbar();
-	removeBrBeforeComments();
-})();
+}

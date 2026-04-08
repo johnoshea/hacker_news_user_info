@@ -8,40 +8,59 @@ A single-file Tampermonkey/Violentmonkey userscript that augments Hacker News co
 
 ## Commands
 
-- **Lint**: `biome lint --write script.js`
-- **Format**: `biome format --write script.js`
+- **Test**: `just test` (or `node --test "tests/*.test.js"`)
+- **Lint**: `just lint` (or `biome lint --write script.js`)
+- **Format**: `just fmt` (or `biome format --write script.js`)
 - **Run**: load `script.js` in a userscript manager (Tampermonkey/Violentmonkey). No build step.
-
-There are no tests.
 
 ## Architecture
 
-Everything lives in `script.js` as one IIFE. Inside it, code is organized into named sub-objects — when changing behavior, find the matching section rather than grepping blindly:
+`script.js` has two halves separated by a hard boundary:
 
-- `GM_addStyle(...)` block at top — all CSS, kept separate from DOM code.
-- `fetchUserData(username)` — wraps `GM_xmlhttpRequest` against `hacker-news.firebaseio.com/v0/user/{username}.json`, with an in-memory `userDataCache` Map to dedupe.
-- `storage` — thin wrapper over `GM_setValue`/`GM_getValue`. **Key conventions** (load-bearing — anything touching state must use these):
-  - `hn_author_rating_<username>` → integer
-  - `hn_custom_tags_<username>` → JSON array of `{value, bgColor, textColor}`
-  - `hn_custom_tag_color_<tag>` → JSON `{bgColor, textColor}` (shared color per tag name)
-- `colorUtils` — random pastel HSL generator + HSL→luminance contrast picker for tag text.
-- `ui` — DOM factory functions (`createRatingControls`, `createTagInput`, `createTagSpan`, `createAccountInfoSpan`).
-- `displayAccountInfoAndTags()` — main pass: collects `.hnuser` elements, fetches all users in parallel, builds a `.hn-post-layout` grid (main row + tag column) and inserts it after each comment header.
-- `stateManagement.exportState/importState` — normalized export format: `{ customTags: { <tag>: {bgColor, textColor} }, users: { <username>: { rating, tags: [<tag>...] } } }`. Import also accepts a legacy flat-key format. Export uses `GM_listValues` to enumerate all `hn_*` keys; import clears existing `hn_*` keys before loading.
-- `createToolbar()` — fixed-position toolbar with Save/Restore buttons and a left-edge drag handle (`mousedown`/`mousemove`/`mouseup` on `document`).
+1. **Pure logic (top of file, above the `if (typeof GM_addStyle !== "undefined")` guard).** Contains `timeSince`, `createStore`, `migrateLegacyKeys`, `parseImport`, `stateToExport`, and their constants. Node-testable: no DOM, no GM_* references. Exported via a conditional `module.exports` block so `require("./script.js")` in Node returns the pure functions while the userscript runtime ignores the export. Tests live in `tests/` and run on `node:test`.
+2. **Browser bootstrap (below the guard).** Does DOM manipulation, network I/O, and event wiring. Runs only inside a userscript runtime.
+
+### Storage
+
+All state lives under a single `hn_state` key (`STATE_KEY`) with this shape:
+```
+{ schemaVersion: 1,
+  ratings: { <user>: int },
+  tags:    { <user>: [<tagName>, ...] },
+  colors:  { <tagName>: { bgColor, textColor } },
+  cache:   { <user>: { created, karma, fetchedAt } } }
+```
+Callers never touch `GM_setValue`/`GM_getValue` directly — go through the `store` object returned by `createStore(backend)` where `backend` is the `{ get, set, list }` adapter wrapping the `GM_*` APIs. The store consolidates writes into one JSON blob; reads are cached in memory.
+
+On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`hn_author_rating_*`, `hn_custom_tags_*`, `hn_custom_tag_color_*`) into the new format. Legacy keys are left in place for one version as a rollback safety net.
+
+### Rendering
+
+`renderAllUsernames()` iterates `.hnuser` elements and for each one builds a skeleton row synchronously (rating controls, tag input, tag list) from store state. The `(age, karma)` blurb is a `(loading…)` placeholder that gets replaced asynchronously by `fetchUser(username).then(...)`. This means a slow or hung request cannot block the rest of the page from rendering.
+
+`fetchUser` is protected by:
+- A persistent cache (`store.getCachedUser`) with a 6h TTL — repeat users incur zero network cost.
+- An in-memory `inflight` Map deduping concurrent fetches for the same username.
+- An 8s `timeout` on `GM_xmlhttpRequest` — without it the request can hang forever and the page never finishes. A failed or timed-out fetch removes the placeholder rather than leaving a ghost.
+
+Tag edit/remove re-renders the affected user's `.hn-tag-group` in place (`renderTagGroup(username, container)`) instead of reloading the page.
+
+### Export/import
+
+Export format is unchanged from v0.3 for backward compatibility: `{ customTags, users }`. `stateToExport(state)` produces it from the consolidated store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import writes the new consolidated blob and reloads.
 
 ## Userscript metadata
 
-The `==UserScript==` header at the top of `script.js` declares the `@match` (only HN item pages) and required `@grant`s: `GM_xmlhttpRequest`, `GM_setValue`, `GM_getValue`, `GM_addStyle`, `GM_listValues`, `GM_deleteValue`. Adding any new `GM_*` API requires adding a matching `@grant` line or it will be undefined at runtime.
+The `==UserScript==` header at the top of `script.js` declares the `@match` (only HN item pages) and required `@grant`s: `GM_xmlhttpRequest`, `GM_setValue`, `GM_getValue`, `GM_addStyle`, `GM_listValues`. Adding any new `GM_*` API requires adding a matching `@grant` line or it will be undefined at runtime.
 
 ## Code style
 
-- Biome-enforced: 2-space indent, semicolons, double quotes. Run `biome format --write script.js` before committing.
-- Match the existing module-object pattern (`storage`, `ui`, `colorUtils`) when adding new groups of related functions.
+- Biome-enforced: tab indent, semicolons, double quotes. Run `just fmt` before committing.
 - Class names on injected DOM are namespaced `hn-*` to avoid clashing with HN's own styles.
+- DOM creation goes through the `h(tag, props, children)` helper, which intentionally does not support setting `innerHTML` — all text goes through `textContent`.
 
 ## Gotchas
 
-- Edits and removals on tags currently `location.reload()` to refresh the view rather than re-rendering — intentional, keep it unless reworking the render path.
+- The pure-logic section must not reference `document`, `window`, or any `GM_*` API. If you need those, put the code below the bootstrap guard.
 - The original `.hnuser` element is hidden (`display: none`) rather than removed, because HN's own click handlers may still reference it.
-- `biome_fixes.txt` in the repo root is a stale artifact from a past lint run — ignore it; consider gitignoring.
+- When adding a new pure function, also add it to the `module.exports` block near the bottom of the pure-logic section, or tests can't see it.

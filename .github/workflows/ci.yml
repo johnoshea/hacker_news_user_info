@@ -1,0 +1,29 @@
+name: CI
+
+# No untrusted inputs are interpolated into `run:` steps — the only things
+# this workflow runs are `node --test` and `biome check` over files checked
+# out from the repo.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run tests
+        run: node --test "tests/*.test.js"
+
+      - uses: biomejs/setup-biome@v2
+        with:
+          version: "2.4.10"
+
+      - name: Biome check
+        run: biome check script.js tests/
