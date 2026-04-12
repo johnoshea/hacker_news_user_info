@@ -602,7 +602,7 @@ if (typeof GM_addStyle !== "undefined") {
 					e.currentTarget.blur();
 					const next = store.getRating(username) + delta;
 					store.setRating(username, next);
-					display.textContent = String(next);
+					rerenderUserRatings(username);
 				},
 			});
 		return h("span", { class: "hn-rating-container" }, [
@@ -637,6 +637,16 @@ if (typeof GM_addStyle !== "undefined") {
 			`.hn-tag-input[data-hn-user="${esc}"]`,
 		)) {
 			input.value = names.join(", ");
+		}
+	}
+
+	function rerenderUserRatings(username) {
+		const esc = CSS.escape(username);
+		const text = String(store.getRating(username));
+		for (const rd of document.querySelectorAll(
+			`.hn-rating-display[data-hn-user="${esc}"]`,
+		)) {
+			rd.textContent = text;
 		}
 	}
 
@@ -880,12 +890,7 @@ if (typeof GM_addStyle !== "undefined") {
 			}
 			for (const username of usernames) {
 				rerenderUserTags(username);
-				const esc = CSS.escape(username);
-				for (const rd of document.querySelectorAll(
-					`.hn-rating-display[data-hn-user="${esc}"]`,
-				)) {
-					rd.textContent = String(store.getRating(username));
-				}
+				rerenderUserRatings(username);
 			}
 		});
 	}
