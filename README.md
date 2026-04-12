@@ -27,13 +27,15 @@ There is no build step. The script is a single file.
 
 ## Using it
 
-**Rating a commenter.** Click ▲ or ▼ next to any username. The number updates immediately and is stored per-username. Revisiting the same thread (or any other thread the same person comments on) shows your stored rating.
+**Rating a commenter.** Click ▲ or ▼ next to any username. The number updates immediately on every comment by that user on the page. Revisiting the same thread (or any other thread the same person comments on) shows your stored rating.
 
 **Tagging a commenter.** Type into the tag input next to the username, separating tags with commas. Tags are saved automatically after you stop typing for about half a second. Each tag name gets a color the first time you use it anywhere, and that same color is reused for every subsequent use.
 
-**Editing a tag.** Click the ✏️ icon on a tag to rename it for that user only.
+**Editing a tag.** Click the ✏️ icon on a tag to rename it. The change applies to every comment by that user on the page.
 
-**Removing a tag.** Click the ✖ icon on a tag to remove it from that user.
+**Removing a tag.** Click the ✖ icon on a tag to remove it from that user across all their comments on the page.
+
+**Cross-tab sync.** Rating and tag changes made in one tab are automatically reflected in other open HN tabs.
 
 **Backing up your data.** Click **Save state** in the top-right toolbar. A JSON file downloads containing all your ratings, tags, and tag colors.
 

@@ -43,7 +43,9 @@ On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`
 - An in-memory `inflight` Map deduping concurrent fetches for the same username.
 - An 8s `timeout` on `GM_xmlhttpRequest` — without it the request can hang forever and the page never finishes. A failed or timed-out fetch removes the placeholder rather than leaving a ghost.
 
-Tag edit/remove re-renders the affected user's `.hn-tag-group` in place (`renderTagGroup(username, container)`) instead of reloading the page.
+Tag/rating mutations sync across all comments by the same user on the page. Injected DOM elements carry a `data-hn-user` attribute so `rerenderUserTags(username)` and `rerenderUserRatings(username)` can query all instances and update them in one pass, rather than only updating the single comment where the action occurred.
+
+Cross-tab sync uses `GM_addValueChangeListener` on `STATE_KEY`. When another tab writes to `hn_state`, the listener fires with `remote === true`, the store's in-memory cache is invalidated via `store._invalidate()`, and all visible users are re-rendered. The listener is guarded behind a `typeof` check so the script degrades gracefully if the API is unavailable.
 
 ### Export/import
 
@@ -51,7 +53,7 @@ Export format is unchanged from v0.3 for backward compatibility: `{ customTags, 
 
 ## Userscript metadata
 
-The `==UserScript==` header at the top of `script.js` declares the `@match` (only HN item pages) and required `@grant`s: `GM_xmlhttpRequest`, `GM_setValue`, `GM_getValue`, `GM_addStyle`, `GM_listValues`. Adding any new `GM_*` API requires adding a matching `@grant` line or it will be undefined at runtime.
+The `==UserScript==` header at the top of `script.js` declares the `@match` (only HN item pages) and required `@grant`s: `GM_xmlhttpRequest`, `GM_setValue`, `GM_getValue`, `GM_addStyle`, `GM_listValues`, `GM_addValueChangeListener`. Adding any new `GM_*` API requires adding a matching `@grant` line or it will be undefined at runtime.
 
 ## Code style
 
