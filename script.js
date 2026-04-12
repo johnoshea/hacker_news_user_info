@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_listValues
+// @grant        GM_addValueChangeListener
 // ==/UserScript==
 
 // =============================================================================
@@ -135,6 +136,11 @@ function createStore(backend) {
 		// Expose raw state for export and for callers that need to iterate.
 		_snapshot() {
 			return load();
+		},
+		// Drop the in-memory cache so the next read reloads from the backend.
+		// Used when another tab writes to the same key.
+		_invalidate() {
+			state = null;
 		},
 	};
 }
@@ -585,6 +591,7 @@ if (typeof GM_addStyle !== "undefined") {
 			class: "hn-rating-display",
 			text: String(store.getRating(username)),
 		});
+		display.dataset.hnUser = username;
 		const mkBtn = (glyph, delta) =>
 			h("button", {
 				class: "hn-rating-btn",
@@ -857,6 +864,29 @@ if (typeof GM_addStyle !== "undefined") {
 			};
 			document.addEventListener("mousemove", onMove);
 			document.addEventListener("mouseup", onUp);
+		});
+	}
+
+	// Sync state from other tabs. GM_addValueChangeListener fires whenever
+	// another tab writes to the same GM storage key. We invalidate the
+	// in-memory cache and re-render every user visible on this page.
+	if (typeof GM_addValueChangeListener === "function") {
+		GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
+			if (!remote) return;
+			store._invalidate();
+			const usernames = new Set();
+			for (const el of document.querySelectorAll("[data-hn-user]")) {
+				usernames.add(el.dataset.hnUser);
+			}
+			for (const username of usernames) {
+				rerenderUserTags(username);
+				const esc = CSS.escape(username);
+				for (const rd of document.querySelectorAll(
+					`.hn-rating-display[data-hn-user="${esc}"]`,
+				)) {
+					rd.textContent = String(store.getRating(username));
+				}
+			}
 		});
 	}
 
