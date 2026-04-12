@@ -611,11 +611,29 @@ if (typeof GM_addStyle !== "undefined") {
 	function renderTagGroup(username, container) {
 		container.replaceChildren();
 		for (const tag of store.getUserTags(username)) {
-			container.appendChild(renderTagSpan(username, tag, container));
+			container.appendChild(renderTagSpan(username, tag));
 		}
 	}
 
-	function renderTagSpan(username, tag, tagGroupEl) {
+	// Re-renders tag groups and updates tag inputs for every instance of a
+	// user on the page. Called after any tag mutation so all comments by the
+	// same author stay in sync.
+	function rerenderUserTags(username) {
+		const esc = CSS.escape(username);
+		for (const group of document.querySelectorAll(
+			`.hn-tag-group[data-hn-user="${esc}"]`,
+		)) {
+			renderTagGroup(username, group);
+		}
+		const names = store.getUserTags(username).map((t) => t.value);
+		for (const input of document.querySelectorAll(
+			`.hn-tag-input[data-hn-user="${esc}"]`,
+		)) {
+			input.value = names.join(", ");
+		}
+	}
+
+	function renderTagSpan(username, tag) {
 		const editIcon = h("span", {
 			class: "hn-tag-icon",
 			title: "Edit tag",
@@ -636,7 +654,7 @@ if (typeof GM_addStyle !== "undefined") {
 						: t,
 				);
 				store.setUserTags(username, updated);
-				renderTagGroup(username, tagGroupEl);
+				rerenderUserTags(username);
 			},
 		});
 		const removeIcon = h("span", {
@@ -651,7 +669,7 @@ if (typeof GM_addStyle !== "undefined") {
 					username,
 					current.filter((t) => t.value !== tag.value),
 				);
-				renderTagGroup(username, tagGroupEl);
+				rerenderUserTags(username);
 			},
 		});
 
@@ -664,7 +682,7 @@ if (typeof GM_addStyle !== "undefined") {
 		return span;
 	}
 
-	function renderTagInput(username, tagGroupEl) {
+	function renderTagInput(username) {
 		const currentNames = store.getUserTags(username).map((t) => t.value);
 		const input = h("input", {
 			type: "text",
@@ -672,6 +690,7 @@ if (typeof GM_addStyle !== "undefined") {
 			value: currentNames.join(", "),
 			placeholder: "Add tags (comma separated)",
 		});
+		input.dataset.hnUser = username;
 
 		let debounce;
 		input.addEventListener("input", () => {
@@ -690,7 +709,7 @@ if (typeof GM_addStyle !== "undefined") {
 					};
 				});
 				store.setUserTags(username, updated);
-				renderTagGroup(username, tagGroupEl);
+				rerenderUserTags(username);
 			}, 500);
 		});
 		return input;
@@ -720,6 +739,7 @@ if (typeof GM_addStyle !== "undefined") {
 			if (!parent) continue;
 
 			const tagGroup = h("div", { class: "hn-tag-group" });
+			tagGroup.dataset.hnUser = username;
 			renderTagGroup(username, tagGroup);
 
 			const usernameClone = usernameEl.cloneNode(true);
@@ -734,7 +754,7 @@ if (typeof GM_addStyle !== "undefined") {
 				usernameClone,
 				infoSlot,
 				renderRatingControls(username),
-				renderTagInput(username, tagGroup),
+				renderTagInput(username),
 			]);
 			const tagContainer = h("div", { class: "hn-tag-container" }, [tagGroup]);
 			const layout = h("div", { class: "hn-post-layout" }, [
