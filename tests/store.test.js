@@ -74,6 +74,24 @@ test("store: getTagColor returns null for unknown tag", () => {
 	assert.equal(store.getTagColor("nope"), null);
 });
 
+test("store: _invalidate forces re-read from backend", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	store.setRating("alice", 5);
+	assert.equal(store.getRating("alice"), 5);
+
+	// Simulate another tab writing directly to the backend.
+	const foreign = createStore(backend);
+	foreign.setRating("alice", 42);
+
+	// Without invalidation, the in-memory cache still returns the old value.
+	assert.equal(store.getRating("alice"), 5);
+
+	// After invalidation, the store re-reads the backend and sees the update.
+	store._invalidate();
+	assert.equal(store.getRating("alice"), 42);
+});
+
 test("store: everything lives under a single backend key", () => {
 	const backend = makeFakeBackend();
 	const store = createStore(backend);

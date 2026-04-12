@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @grant        GM_listValues
+// @grant        GM_addValueChangeListener
 // ==/UserScript==
 
 // =============================================================================
@@ -135,6 +136,11 @@ function createStore(backend) {
 		// Expose raw state for export and for callers that need to iterate.
 		_snapshot() {
 			return load();
+		},
+		// Drop the in-memory cache so the next read reloads from the backend.
+		// Used when another tab writes to the same key.
+		_invalidate() {
+			state = null;
 		},
 	};
 }
@@ -585,6 +591,7 @@ if (typeof GM_addStyle !== "undefined") {
 			class: "hn-rating-display",
 			text: String(store.getRating(username)),
 		});
+		display.dataset.hnUser = username;
 		const mkBtn = (glyph, delta) =>
 			h("button", {
 				class: "hn-rating-btn",
@@ -595,7 +602,7 @@ if (typeof GM_addStyle !== "undefined") {
 					e.currentTarget.blur();
 					const next = store.getRating(username) + delta;
 					store.setRating(username, next);
-					display.textContent = String(next);
+					rerenderUserRatings(username);
 				},
 			});
 		return h("span", { class: "hn-rating-container" }, [
@@ -611,11 +618,39 @@ if (typeof GM_addStyle !== "undefined") {
 	function renderTagGroup(username, container) {
 		container.replaceChildren();
 		for (const tag of store.getUserTags(username)) {
-			container.appendChild(renderTagSpan(username, tag, container));
+			container.appendChild(renderTagSpan(username, tag));
 		}
 	}
 
-	function renderTagSpan(username, tag, tagGroupEl) {
+	// Re-renders tag groups and updates tag inputs for every instance of a
+	// user on the page. Called after any tag mutation so all comments by the
+	// same author stay in sync.
+	function rerenderUserTags(username) {
+		const esc = CSS.escape(username);
+		for (const group of document.querySelectorAll(
+			`.hn-tag-group[data-hn-user="${esc}"]`,
+		)) {
+			renderTagGroup(username, group);
+		}
+		const names = store.getUserTags(username).map((t) => t.value);
+		for (const input of document.querySelectorAll(
+			`.hn-tag-input[data-hn-user="${esc}"]`,
+		)) {
+			input.value = names.join(", ");
+		}
+	}
+
+	function rerenderUserRatings(username) {
+		const esc = CSS.escape(username);
+		const text = String(store.getRating(username));
+		for (const rd of document.querySelectorAll(
+			`.hn-rating-display[data-hn-user="${esc}"]`,
+		)) {
+			rd.textContent = text;
+		}
+	}
+
+	function renderTagSpan(username, tag) {
 		const editIcon = h("span", {
 			class: "hn-tag-icon",
 			title: "Edit tag",
@@ -636,7 +671,7 @@ if (typeof GM_addStyle !== "undefined") {
 						: t,
 				);
 				store.setUserTags(username, updated);
-				renderTagGroup(username, tagGroupEl);
+				rerenderUserTags(username);
 			},
 		});
 		const removeIcon = h("span", {
@@ -651,7 +686,7 @@ if (typeof GM_addStyle !== "undefined") {
 					username,
 					current.filter((t) => t.value !== tag.value),
 				);
-				renderTagGroup(username, tagGroupEl);
+				rerenderUserTags(username);
 			},
 		});
 
@@ -664,7 +699,7 @@ if (typeof GM_addStyle !== "undefined") {
 		return span;
 	}
 
-	function renderTagInput(username, tagGroupEl) {
+	function renderTagInput(username) {
 		const currentNames = store.getUserTags(username).map((t) => t.value);
 		const input = h("input", {
 			type: "text",
@@ -672,6 +707,7 @@ if (typeof GM_addStyle !== "undefined") {
 			value: currentNames.join(", "),
 			placeholder: "Add tags (comma separated)",
 		});
+		input.dataset.hnUser = username;
 
 		let debounce;
 		input.addEventListener("input", () => {
@@ -690,7 +726,7 @@ if (typeof GM_addStyle !== "undefined") {
 					};
 				});
 				store.setUserTags(username, updated);
-				renderTagGroup(username, tagGroupEl);
+				rerenderUserTags(username);
 			}, 500);
 		});
 		return input;
@@ -720,6 +756,7 @@ if (typeof GM_addStyle !== "undefined") {
 			if (!parent) continue;
 
 			const tagGroup = h("div", { class: "hn-tag-group" });
+			tagGroup.dataset.hnUser = username;
 			renderTagGroup(username, tagGroup);
 
 			const usernameClone = usernameEl.cloneNode(true);
@@ -734,7 +771,7 @@ if (typeof GM_addStyle !== "undefined") {
 				usernameClone,
 				infoSlot,
 				renderRatingControls(username),
-				renderTagInput(username, tagGroup),
+				renderTagInput(username),
 			]);
 			const tagContainer = h("div", { class: "hn-tag-container" }, [tagGroup]);
 			const layout = h("div", { class: "hn-post-layout" }, [
@@ -837,6 +874,24 @@ if (typeof GM_addStyle !== "undefined") {
 			};
 			document.addEventListener("mousemove", onMove);
 			document.addEventListener("mouseup", onUp);
+		});
+	}
+
+	// Sync state from other tabs. GM_addValueChangeListener fires whenever
+	// another tab writes to the same GM storage key. We invalidate the
+	// in-memory cache and re-render every user visible on this page.
+	if (typeof GM_addValueChangeListener === "function") {
+		GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
+			if (!remote) return;
+			store._invalidate();
+			const usernames = new Set();
+			for (const el of document.querySelectorAll("[data-hn-user]")) {
+				usernames.add(el.dataset.hnUser);
+			}
+			for (const username of usernames) {
+				rerenderUserTags(username);
+				rerenderUserRatings(username);
+			}
 		});
 	}
 
