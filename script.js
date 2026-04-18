@@ -133,6 +133,12 @@ function createStore(backend) {
 			load().cache[username] = { created, karma, fetchedAt: nowMs };
 			save();
 		},
+		replaceTagsAndColors(tagsByUser, colorsByTag) {
+			const s = load();
+			s.tags = tagsByUser;
+			s.colors = colorsByTag;
+			save();
+		},
 		// Expose raw state for export and for callers that need to iterate.
 		_snapshot() {
 			return load();
