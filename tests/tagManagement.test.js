@@ -148,3 +148,36 @@ test("countsFromState: counts distinct users per tag, includes orphans", () => {
 
 	assert.deepEqual(countsFromState(state), { foo: 3, bar: 1, baz: 0 });
 });
+
+// Multi-step draft composition: rename + remove applied in sequence
+// produces the expected shape. Verifies the helpers chain cleanly,
+// which is how the overlay builds a draft.
+test("renameTagInState + removeTagInState compose", () => {
+	const state = {
+		schemaVersion: 1,
+		ratings: {},
+		tags: {
+			alice: ["engineer", "rustacean", "obsolete"],
+			bob: ["Engineer", "obsolete"],
+		},
+		colors: {
+			engineer: { bgColor: "src", textColor: "black" },
+			Engineer: { bgColor: "dest", textColor: "black" },
+			rustacean: { bgColor: "rst", textColor: "black" },
+			obsolete: { bgColor: "old", textColor: "black" },
+		},
+		cache: {},
+	};
+
+	const afterRename = renameTagInState(state, "engineer", "Engineer");
+	const afterRemove = removeTagInState(afterRename, "obsolete");
+
+	assert.deepEqual(afterRemove.tags, {
+		alice: ["Engineer", "rustacean"],
+		bob: ["Engineer"],
+	});
+	assert.deepEqual(afterRemove.colors, {
+		Engineer: { bgColor: "dest", textColor: "black" },
+		rustacean: { bgColor: "rst", textColor: "black" },
+	});
+});
