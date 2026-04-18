@@ -576,6 +576,140 @@ if (typeof GM_addStyle !== "undefined") {
       font-weight: bold;
     }
     .hn-toolbar-btn:hover { background-color: #ff8533; }
+    .hn-tagmgr-catcher {
+      position: fixed;
+      inset: 0;
+      z-index: 9998;
+      background: transparent;
+    }
+    .hn-tagmgr-overlay {
+      position: fixed;
+      top: 5vh;
+      right: 0;
+      width: 33vw;
+      min-width: 320px;
+      height: 90vh;
+      background-color: white;
+      border: 1px solid #ff6600;
+      border-radius: 4px 0 0 4px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      font-size: 0.9em;
+    }
+    .hn-tagmgr-header {
+      padding: 8px 12px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+    }
+    .hn-tagmgr-header-count { color: #888; font-weight: normal; }
+    .hn-tagmgr-controls {
+      padding: 8px 12px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hn-tagmgr-filter {
+      width: 100%;
+      padding: 4px 6px;
+      box-sizing: border-box;
+    }
+    .hn-tagmgr-sort { display: flex; gap: 6px; }
+    .hn-tagmgr-sort-btn {
+      font-size: 0.85em;
+      padding: 2px 8px;
+      background: #f4f4f4;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .hn-tagmgr-sort-btn.active {
+      background: #ff6600;
+      color: white;
+      border-color: #ff6600;
+    }
+    .hn-tagmgr-list {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .hn-tagmgr-row {
+      display: flex;
+      align-items: center;
+      padding: 4px 12px;
+      gap: 8px;
+      border-left: 2px solid transparent;
+    }
+    .hn-tagmgr-row.dirty { border-left-color: #ff6600; }
+    .hn-tagmgr-row.removed .hn-tagmgr-name { text-decoration: line-through; }
+    .hn-tagmgr-row.removed { opacity: 0.6; }
+    .hn-tagmgr-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      flex: 0 0 12px;
+      border: 1px solid rgba(0,0,0,0.1);
+    }
+    .hn-tagmgr-name {
+      flex: 1 1 auto;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hn-tagmgr-name-input {
+      flex: 1 1 auto;
+      font-size: 1em;
+      padding: 1px 5px;
+    }
+    .hn-tagmgr-count {
+      flex: 0 0 auto;
+      font-size: 0.85em;
+      color: #666;
+      min-width: 2em;
+      text-align: right;
+    }
+    .hn-tagmgr-count.zero { color: #bbb; }
+    .hn-tagmgr-icons { display: flex; gap: 4px; flex: 0 0 auto; }
+    .hn-tagmgr-icon {
+      cursor: pointer;
+      width: 20px;
+      height: 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+    .hn-tagmgr-icon:hover { background: #eee; }
+    .hn-tagmgr-footer {
+      padding: 8px 12px;
+      border-top: 1px solid #eee;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .hn-tagmgr-btn {
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      padding: 5px 14px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .hn-tagmgr-btn.primary {
+      background: #ff6600;
+      color: white;
+      border-color: #ff6600;
+    }
+    .hn-tagmgr-btn:hover { filter: brightness(0.95); }
   `);
 
 	// How long a cached {created, karma} pair is considered fresh. Karma drifts
