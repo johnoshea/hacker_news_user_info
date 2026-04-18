@@ -342,11 +342,11 @@ function renameTagInState(state, oldName, newName) {
 
 	const tags = state.tags || {};
 	const colors = state.colors || {};
-	const inColors = Object.prototype.hasOwnProperty.call(colors, oldName);
+	const inColors = Object.hasOwn(colors, oldName);
 	const inTags = Object.values(tags).some((list) => list.includes(oldName));
 	if (!inColors && !inTags) return state;
 
-	const destExists = Object.prototype.hasOwnProperty.call(colors, trimmed);
+	const destExists = Object.hasOwn(colors, trimmed);
 
 	const newTags = {};
 	for (const [user, list] of Object.entries(tags)) {
@@ -372,6 +372,29 @@ function renameTagInState(state, oldName, newName) {
 	return { ...state, tags: newTags, colors: newColors };
 }
 
+// Returns a new state with `tagName` removed from every user's tag list
+// and from the colors map. No-op (same reference) if the tag isn't
+// present anywhere.
+function removeTagInState(state, tagName) {
+	const tags = state.tags || {};
+	const colors = state.colors || {};
+	const inColors = Object.hasOwn(colors, tagName);
+	const inTags = Object.values(tags).some((list) => list.includes(tagName));
+	if (!inColors && !inTags) return state;
+
+	const newTags = {};
+	for (const [user, list] of Object.entries(tags)) {
+		newTags[user] = list.includes(tagName)
+			? list.filter((t) => t !== tagName)
+			: list.slice();
+	}
+
+	const newColors = { ...colors };
+	delete newColors[tagName];
+
+	return { ...state, tags: newTags, colors: newColors };
+}
+
 // Node test export. In the userscript environment `module` is undefined and
 // this block is a no-op.
 if (typeof module !== "undefined" && module.exports) {
@@ -382,6 +405,7 @@ if (typeof module !== "undefined" && module.exports) {
 		parseImport,
 		stateToExport,
 		renameTagInState,
+		removeTagInState,
 	};
 }
 

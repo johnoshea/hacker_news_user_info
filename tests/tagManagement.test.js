@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { renameTagInState } = require("./_load");
+const { renameTagInState, removeTagInState } = require("./_load");
 
 // Pure rename: when the destination name does not exist, the tag's color
 // entry moves to the new name and every user carrying the old name has it
@@ -83,4 +83,44 @@ test("renameTagInState: no-ops return the same reference", () => {
 	assert.equal(renameTagInState(state, "foo", ""), state);
 	assert.equal(renameTagInState(state, "foo", "   "), state);
 	assert.equal(renameTagInState(state, "missing", "x"), state);
+});
+
+// Removal strips the tag from every user's list and deletes the color
+// entry. Ratings and cache slices are untouched.
+test("removeTagInState: strips tag from all users and deletes color", () => {
+	const state = {
+		schemaVersion: 1,
+		ratings: { alice: 2 },
+		tags: {
+			alice: ["foo", "bar"],
+			bob: ["foo"],
+		},
+		colors: {
+			foo: { bgColor: "fooc", textColor: "black" },
+			bar: { bgColor: "barc", textColor: "black" },
+		},
+		cache: { alice: { created: 1, karma: 2, fetchedAt: 3 } },
+	};
+
+	const next = removeTagInState(state, "foo");
+
+	assert.deepEqual(next.tags, { alice: ["bar"], bob: [] });
+	assert.deepEqual(next.colors, {
+		bar: { bgColor: "barc", textColor: "black" },
+	});
+	assert.deepEqual(next.ratings, { alice: 2 });
+	assert.deepEqual(next.cache, { alice: { created: 1, karma: 2, fetchedAt: 3 } });
+});
+
+// Removal of a tag that isn't present anywhere is a no-op and returns
+// the same reference.
+test("removeTagInState: missing tag returns the same reference", () => {
+	const state = {
+		schemaVersion: 1,
+		ratings: {},
+		tags: { alice: ["foo"] },
+		colors: { foo: { bgColor: "x", textColor: "black" } },
+		cache: {},
+	};
+	assert.equal(removeTagInState(state, "notpresent"), state);
 });
