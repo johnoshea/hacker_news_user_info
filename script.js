@@ -328,6 +328,50 @@ function stateToExport(state) {
 	return { customTags, users };
 }
 
+// Returns a new state with every user's `oldName` tag replaced by `newName`
+// and the color entry moved accordingly. If `newName` already exists as a
+// tag (in colors or any user's tag list), this becomes a merge: the
+// destination's color is kept, the source color is dropped, and any user
+// carrying both ends up with one entry (first-occurrence wins, so the
+// relative order of other tags is preserved). Empty / whitespace-only
+// `newName`, a no-op rename, or a rename of a tag that isn't present
+// anywhere returns the same reference.
+function renameTagInState(state, oldName, newName) {
+	const trimmed = typeof newName === "string" ? newName.trim() : "";
+	if (!trimmed || trimmed === oldName) return state;
+
+	const tags = state.tags || {};
+	const colors = state.colors || {};
+	const inColors = Object.prototype.hasOwnProperty.call(colors, oldName);
+	const inTags = Object.values(tags).some((list) => list.includes(oldName));
+	if (!inColors && !inTags) return state;
+
+	const destExists = Object.prototype.hasOwnProperty.call(colors, trimmed);
+
+	const newTags = {};
+	for (const [user, list] of Object.entries(tags)) {
+		if (!list.includes(oldName)) {
+			newTags[user] = list.slice();
+			continue;
+		}
+		const renamed = list.map((t) => (t === oldName ? trimmed : t));
+		const seen = new Set();
+		newTags[user] = renamed.filter((t) => {
+			if (seen.has(t)) return false;
+			seen.add(t);
+			return true;
+		});
+	}
+
+	const newColors = { ...colors };
+	delete newColors[oldName];
+	if (!destExists && inColors) {
+		newColors[trimmed] = colors[oldName];
+	}
+
+	return { ...state, tags: newTags, colors: newColors };
+}
+
 // Node test export. In the userscript environment `module` is undefined and
 // this block is a no-op.
 if (typeof module !== "undefined" && module.exports) {
@@ -337,6 +381,7 @@ if (typeof module !== "undefined" && module.exports) {
 		migrateLegacyKeys,
 		parseImport,
 		stateToExport,
+		renameTagInState,
 	};
 }
 
