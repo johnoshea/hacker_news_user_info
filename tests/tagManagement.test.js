@@ -124,3 +124,27 @@ test("removeTagInState: missing tag returns the same reference", () => {
 	};
 	assert.equal(removeTagInState(state, "notpresent"), state);
 });
+
+// Counts include every tag that has a color entry OR appears on any
+// user. Orphan tags (color entry only, no users) show as count 0.
+// Duplicates in a single user's list are counted once.
+test("countsFromState: counts distinct users per tag, includes orphans", () => {
+	const { countsFromState } = require("./_load");
+	const state = {
+		schemaVersion: 1,
+		ratings: { alice: 99 },
+		tags: {
+			alice: ["foo", "bar"],
+			bob: ["foo"],
+			carol: ["foo", "foo"], // accidental duplicate — counted once
+		},
+		colors: {
+			foo: { bgColor: "x", textColor: "black" },
+			bar: { bgColor: "y", textColor: "black" },
+			baz: { bgColor: "z", textColor: "black" }, // orphan
+		},
+		cache: {},
+	};
+
+	assert.deepEqual(countsFromState(state), { foo: 3, bar: 1, baz: 0 });
+});

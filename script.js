@@ -395,6 +395,24 @@ function removeTagInState(state, tagName) {
 	return { ...state, tags: newTags, colors: newColors };
 }
 
+// Distinct-users-per-tag count. Includes tags that appear only in the
+// colors map (orphans) with a count of 0.
+function countsFromState(state) {
+	const tags = state.tags || {};
+	const colors = state.colors || {};
+	const counts = {};
+	for (const tagName of Object.keys(colors)) counts[tagName] = 0;
+	for (const list of Object.values(tags)) {
+		const seen = new Set();
+		for (const t of list) {
+			if (seen.has(t)) continue;
+			seen.add(t);
+			counts[t] = (counts[t] || 0) + 1;
+		}
+	}
+	return counts;
+}
+
 // Node test export. In the userscript environment `module` is undefined and
 // this block is a no-op.
 if (typeof module !== "undefined" && module.exports) {
@@ -406,6 +424,7 @@ if (typeof module !== "undefined" && module.exports) {
 		stateToExport,
 		renameTagInState,
 		removeTagInState,
+		countsFromState,
 	};
 }
 
