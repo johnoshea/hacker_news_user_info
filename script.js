@@ -918,9 +918,19 @@ if (typeof GM_addStyle !== "undefined") {
 			},
 		});
 
+		const manageIcon = h("span", {
+			class: "hn-tag-icon",
+			title: "Manage all tags",
+			text: "\u2630", // ☰
+			onclick: (e) => {
+				e.stopPropagation();
+				openTagManager();
+			},
+		});
+
 		const span = h("div", { class: "hn-tag" }, [
 			h("span", { class: "hn-tag-text", text: tag.value }),
-			h("div", { class: "hn-tag-icons" }, [editIcon, removeIcon]),
+			h("div", { class: "hn-tag-icons" }, [editIcon, manageIcon, removeIcon]),
 		]);
 		span.style.backgroundColor = tag.bgColor || "";
 		span.style.color = tag.textColor || "black";
@@ -1117,7 +1127,6 @@ if (typeof GM_addStyle !== "undefined") {
 		);
 	}
 
-	// biome-ignore lint/correctness/noUnusedVariables: wired in Task 12
 	function openTagManager() {
 		if (tagManagerOpen) return;
 		tagManagerOpen = true;
@@ -1199,7 +1208,10 @@ if (typeof GM_addStyle !== "undefined") {
 				if (confirmDiscardIfDirty()) closeTagManager({ commit: false });
 			},
 		});
-		const footer = h("div", { class: "hn-tagmgr-footer" }, [cancelBtn, saveBtn]);
+		const footer = h("div", { class: "hn-tagmgr-footer" }, [
+			cancelBtn,
+			saveBtn,
+		]);
 
 		const list = h("div", { class: "hn-tagmgr-list" });
 
@@ -1277,11 +1289,14 @@ if (typeof GM_addStyle !== "undefined") {
 
 			const entries = [...rows.entries()]
 				.map(([originalName, row]) => {
-					const displayName = row.pendingRemoval ? originalName : row.currentName;
-					const count = row.pendingRemoval
-						? 0
-						: counts[row.currentName] || 0;
-					const color = computed.colors[row.currentName] || live.colors[originalName] || null;
+					const displayName = row.pendingRemoval
+						? originalName
+						: row.currentName;
+					const count = row.pendingRemoval ? 0 : counts[row.currentName] || 0;
+					const color =
+						computed.colors[row.currentName] ||
+						live.colors[originalName] ||
+						null;
 					return { originalName, row, displayName, count, color };
 				})
 				.filter(({ displayName }) =>
@@ -1292,7 +1307,9 @@ if (typeof GM_addStyle !== "undefined") {
 				if (sortMode === "count") {
 					if (a.count !== b.count) return a.count - b.count;
 				}
-				return a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase());
+				return a.displayName
+					.toLowerCase()
+					.localeCompare(b.displayName.toLowerCase());
 			});
 
 			sortNameBtn.classList.toggle("active", sortMode === "name");
@@ -1363,8 +1380,13 @@ if (typeof GM_addStyle !== "undefined") {
 								r.currentName === proposed,
 						);
 						if (collidesWith) {
-							const srcCount = countsFromState(computeDraft())[row.currentName] || 0;
-							if (!confirm(`Merge "${row.currentName}" into "${proposed}"? ${srcCount} user${srcCount === 1 ? "" : "s"} will be updated.`)) {
+							const srcCount =
+								countsFromState(computeDraft())[row.currentName] || 0;
+							if (
+								!confirm(
+									`Merge "${row.currentName}" into "${proposed}"? ${srcCount} user${srcCount === 1 ? "" : "s"} will be updated.`,
+								)
+							) {
 								renderOverlay();
 								return;
 							}
