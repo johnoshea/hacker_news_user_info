@@ -67,3 +67,13 @@ just check  # lint + format + test
 ```
 
 Tests cover the pure-logic layer (storage, migration, cache, time formatting, import/export parsing). Rendering and GM_* integration are verified manually in a userscript manager.
+
+### Utilities
+
+`scripts/clean-orphan-tags.js` strips unused tag colour entries from an exported state file. Save state from the toolbar, run the script on the downloaded JSON, then Restore state from the cleaned file:
+
+```sh
+node scripts/clean-orphan-tags.js ~/Downloads/hn-user-data-YYYY-MM-DD.json
+```
+
+The cleaned file is written alongside the input with a `.cleaned.json` suffix; the original is untouched.
