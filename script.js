@@ -1395,6 +1395,31 @@ if (typeof GM_addStyle !== "undefined") {
 			});
 			icons.appendChild(editIcon);
 
+			if (dirty) {
+				const undoIcon = h("span", {
+					class: "hn-tagmgr-icon",
+					title: "Undo changes to this row",
+					text: "\u21A9", // ↩
+					onclick: () => {
+						row.currentName = originalName;
+						row.pendingRemoval = false;
+						renderOverlay();
+					},
+				});
+				icons.appendChild(undoIcon);
+			}
+
+			const removeIcon = h("span", {
+				class: "hn-tagmgr-icon",
+				title: row.pendingRemoval ? "Keep tag" : "Remove tag",
+				text: "\u2716", // ✖
+				onclick: () => {
+					row.pendingRemoval = !row.pendingRemoval;
+					renderOverlay();
+				},
+			});
+			icons.appendChild(removeIcon);
+
 			rowEl.appendChild(swatch);
 			rowEl.appendChild(nameEl);
 			rowEl.appendChild(countEl);
