@@ -35,6 +35,8 @@ There is no build step. The script is a single file.
 
 **Removing a tag.** Click the ✖ icon on a tag to remove it from that user across all their comments on the page.
 
+**Managing all tags.** Click the ☰ icon on any tag to open the tag manager overlay on the right-hand side of the page. It lists every tag you have ever created, sortable by name or by usage count and filterable by substring. From there you can rename a tag (press Enter to commit; renaming to a name that already exists prompts to merge), mark a tag for removal, or undo pending changes on a row. Click **Save** to apply everything at once, or **Cancel** / press **Escape** / click outside the overlay to discard your changes.
+
 **Cross-tab sync.** Rating and tag changes made in one tab are automatically reflected in other open HN tabs.
 
 **Backing up your data.** Click **Save state** in the top-right toolbar. A JSON file downloads containing all your ratings, tags, and tag colors.

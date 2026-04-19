@@ -133,6 +133,12 @@ function createStore(backend) {
 			load().cache[username] = { created, karma, fetchedAt: nowMs };
 			save();
 		},
+		replaceTagsAndColors(tagsByUser, colorsByTag) {
+			const s = load();
+			s.tags = tagsByUser;
+			s.colors = colorsByTag;
+			save();
+		},
 		// Expose raw state for export and for callers that need to iterate.
 		_snapshot() {
 			return load();
@@ -328,6 +334,91 @@ function stateToExport(state) {
 	return { customTags, users };
 }
 
+// Returns a new state with every user's `oldName` tag replaced by `newName`
+// and the color entry moved accordingly. If `newName` already exists as a
+// tag (in colors or any user's tag list), this becomes a merge: the
+// destination's color is kept, the source color is dropped, and any user
+// carrying both ends up with one entry (first-occurrence wins, so the
+// relative order of other tags is preserved). Empty / whitespace-only
+// `newName`, a no-op rename, or a rename of a tag that isn't present
+// anywhere returns the same reference.
+function renameTagInState(state, oldName, newName) {
+	const trimmed = typeof newName === "string" ? newName.trim() : "";
+	if (!trimmed || trimmed === oldName) return state;
+
+	const tags = state.tags || {};
+	const colors = state.colors || {};
+	const inColors = Object.hasOwn(colors, oldName);
+	const inTags = Object.values(tags).some((list) => list.includes(oldName));
+	if (!inColors && !inTags) return state;
+
+	const destExists = Object.hasOwn(colors, trimmed);
+
+	const newTags = {};
+	for (const [user, list] of Object.entries(tags)) {
+		if (!list.includes(oldName)) {
+			newTags[user] = list.slice();
+			continue;
+		}
+		const renamed = list.map((t) => (t === oldName ? trimmed : t));
+		const seen = new Set();
+		newTags[user] = renamed.filter((t) => {
+			if (seen.has(t)) return false;
+			seen.add(t);
+			return true;
+		});
+	}
+
+	const newColors = { ...colors };
+	delete newColors[oldName];
+	if (!destExists && inColors) {
+		newColors[trimmed] = colors[oldName];
+	}
+
+	return { ...state, tags: newTags, colors: newColors };
+}
+
+// Returns a new state with `tagName` removed from every user's tag list
+// and from the colors map. No-op (same reference) if the tag isn't
+// present anywhere.
+function removeTagInState(state, tagName) {
+	const tags = state.tags || {};
+	const colors = state.colors || {};
+	const inColors = Object.hasOwn(colors, tagName);
+	const inTags = Object.values(tags).some((list) => list.includes(tagName));
+	if (!inColors && !inTags) return state;
+
+	const newTags = {};
+	for (const [user, list] of Object.entries(tags)) {
+		newTags[user] = list.includes(tagName)
+			? list.filter((t) => t !== tagName)
+			: list.slice();
+	}
+
+	const newColors = { ...colors };
+	delete newColors[tagName];
+
+	return { ...state, tags: newTags, colors: newColors };
+}
+
+// Distinct-users-per-tag count. Includes tags that appear only in the
+// colors map (orphans) with a count of 0.
+function countsFromState(state) {
+	const tags = state.tags || {};
+	const colors = state.colors || {};
+	const counts = {};
+	for (const tagName of Object.keys(colors)) counts[tagName] = 0;
+	for (const list of Object.values(tags)) {
+		const seen = new Set();
+		for (const t of list) {
+			if (seen.has(t)) continue;
+			seen.add(t);
+			counts[t] = (counts[t] || 0) + 1;
+		}
+	}
+	return counts;
+}
+
 // Node test export. In the userscript environment `module` is undefined and
 // this block is a no-op.
 if (typeof module !== "undefined" && module.exports) {
@@ -337,6 +428,9 @@ if (typeof module !== "undefined" && module.exports) {
 		migrateLegacyKeys,
 		parseImport,
 		stateToExport,
+		renameTagInState,
+		removeTagInState,
+		countsFromState,
 	};
 }
 
@@ -482,6 +576,140 @@ if (typeof GM_addStyle !== "undefined") {
       font-weight: bold;
     }
     .hn-toolbar-btn:hover { background-color: #ff8533; }
+    .hn-tagmgr-catcher {
+      position: fixed;
+      inset: 0;
+      z-index: 9998;
+      background: transparent;
+    }
+    .hn-tagmgr-overlay {
+      position: fixed;
+      top: 5vh;
+      right: 0;
+      width: 33vw;
+      min-width: 320px;
+      height: 90vh;
+      background-color: white;
+      border: 1px solid #ff6600;
+      border-radius: 4px 0 0 4px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      font-size: 0.9em;
+    }
+    .hn-tagmgr-header {
+      padding: 8px 12px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+    }
+    .hn-tagmgr-header-count { color: #888; font-weight: normal; }
+    .hn-tagmgr-controls {
+      padding: 8px 12px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hn-tagmgr-filter {
+      width: 100%;
+      padding: 4px 6px;
+      box-sizing: border-box;
+    }
+    .hn-tagmgr-sort { display: flex; gap: 6px; }
+    .hn-tagmgr-sort-btn {
+      font-size: 0.85em;
+      padding: 2px 8px;
+      background: #f4f4f4;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .hn-tagmgr-sort-btn.active {
+      background: #ff6600;
+      color: white;
+      border-color: #ff6600;
+    }
+    .hn-tagmgr-list {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .hn-tagmgr-row {
+      display: flex;
+      align-items: center;
+      padding: 4px 12px;
+      gap: 8px;
+      border-left: 2px solid transparent;
+    }
+    .hn-tagmgr-row.dirty { border-left-color: #ff6600; }
+    .hn-tagmgr-row.removed .hn-tagmgr-name { text-decoration: line-through; }
+    .hn-tagmgr-row.removed { opacity: 0.6; }
+    .hn-tagmgr-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      flex: 0 0 12px;
+      border: 1px solid rgba(0,0,0,0.1);
+    }
+    .hn-tagmgr-name {
+      flex: 1 1 auto;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hn-tagmgr-name-input {
+      flex: 1 1 auto;
+      font-size: 1em;
+      padding: 1px 5px;
+    }
+    .hn-tagmgr-count {
+      flex: 0 0 auto;
+      font-size: 0.85em;
+      color: #666;
+      min-width: 2em;
+      text-align: right;
+    }
+    .hn-tagmgr-count.zero { color: #bbb; }
+    .hn-tagmgr-icons { display: flex; gap: 4px; flex: 0 0 auto; }
+    .hn-tagmgr-icon {
+      cursor: pointer;
+      width: 20px;
+      height: 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+    .hn-tagmgr-icon:hover { background: #eee; }
+    .hn-tagmgr-footer {
+      padding: 8px 12px;
+      border-top: 1px solid #eee;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .hn-tagmgr-btn {
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      padding: 5px 14px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .hn-tagmgr-btn.primary {
+      background: #ff6600;
+      color: white;
+      border-color: #ff6600;
+    }
+    .hn-tagmgr-btn:hover { filter: brightness(0.95); }
   `);
 
 	// How long a cached {created, karma} pair is considered fresh. Karma drifts
@@ -690,9 +918,19 @@ if (typeof GM_addStyle !== "undefined") {
 			},
 		});
 
+		const manageIcon = h("span", {
+			class: "hn-tag-icon",
+			title: "Manage all tags",
+			text: "\u2630", // ☰
+			onclick: (e) => {
+				e.stopPropagation();
+				openTagManager();
+			},
+		});
+
 		const span = h("div", { class: "hn-tag" }, [
 			h("span", { class: "hn-tag-text", text: tag.value }),
-			h("div", { class: "hn-tag-icons" }, [editIcon, removeIcon]),
+			h("div", { class: "hn-tag-icons" }, [editIcon, manageIcon, removeIcon]),
 		]);
 		span.style.backgroundColor = tag.bgColor || "";
 		span.style.color = tag.textColor || "black";
@@ -918,6 +1156,343 @@ if (typeof GM_addStyle !== "undefined") {
 			document.addEventListener("mousemove", onMove);
 			document.addEventListener("mouseup", onUp);
 		});
+	}
+
+	// Single-instance tag-management overlay. The overlay holds a draft
+	// snapshot of {tags, colors}; edits mutate the draft via pure helpers,
+	// and Save writes the draft back atomically.
+	let tagManagerOpen = false;
+
+	function isDraftDirty(liveSnapshot, draft) {
+		return (
+			JSON.stringify(liveSnapshot.tags || {}) !== JSON.stringify(draft.tags) ||
+			JSON.stringify(liveSnapshot.colors || {}) !== JSON.stringify(draft.colors)
+		);
+	}
+
+	function openTagManager() {
+		if (tagManagerOpen) return;
+		tagManagerOpen = true;
+
+		const live = store._snapshot();
+		const draft = {
+			tags: JSON.parse(JSON.stringify(live.tags || {})),
+			colors: JSON.parse(JSON.stringify(live.colors || {})),
+		};
+
+		// Per-row state keyed by the tag name as it existed when the overlay
+		// opened. Undo on a row reverts that row's changes only.
+		const rows = new Map(); // originalName -> { currentName, pendingRemoval }
+		const allNames = new Set([
+			...Object.keys(live.colors || {}),
+			...Object.values(live.tags || {}).flat(),
+		]);
+		for (const name of allNames) {
+			rows.set(name, { currentName: name, pendingRemoval: false });
+		}
+
+		let filter = "";
+		let sortMode = "name"; // "name" | "count"
+
+		const catcher = h("div", { class: "hn-tagmgr-catcher" });
+		const overlay = h("div", { class: "hn-tagmgr-overlay" });
+		document.body.appendChild(catcher);
+		document.body.appendChild(overlay);
+
+		function closeTagManager({ commit }) {
+			if (commit) {
+				if (isDraftDirty(live, draft)) {
+					store.replaceTagsAndColors(draft.tags, draft.colors);
+					store._invalidate();
+					const visibleUsers = new Set();
+					for (const el of document.querySelectorAll("[data-hn-user]")) {
+						visibleUsers.add(el.dataset.hnUser);
+					}
+					for (const username of visibleUsers) rerenderUserTags(username);
+				}
+			}
+			document.removeEventListener("keydown", onKeyDown);
+			catcher.remove();
+			overlay.remove();
+			tagManagerOpen = false;
+		}
+
+		function confirmDiscardIfDirty() {
+			if (!isDraftDirty(live, draft)) return true;
+			return confirm("Discard unsaved tag changes?");
+		}
+
+		function onKeyDown(e) {
+			if (e.key !== "Escape") return;
+			// If focus is inside a rename input, let the row handle its own
+			// Escape (cancels the field, doesn't close the overlay).
+			const active = document.activeElement;
+			if (active?.classList.contains("hn-tagmgr-name-input")) return;
+			e.preventDefault();
+			if (confirmDiscardIfDirty()) closeTagManager({ commit: false });
+		}
+		document.addEventListener("keydown", onKeyDown);
+
+		catcher.addEventListener("click", () => {
+			if (confirmDiscardIfDirty()) closeTagManager({ commit: false });
+		});
+
+		// Footer (Save / Cancel) wired immediately; list + controls wired by
+		// later tasks via renderOverlay().
+		const saveBtn = h("button", {
+			class: "hn-tagmgr-btn primary",
+			text: "Save",
+			onclick: () => closeTagManager({ commit: true }),
+		});
+		const cancelBtn = h("button", {
+			class: "hn-tagmgr-btn",
+			text: "Cancel",
+			onclick: () => {
+				if (confirmDiscardIfDirty()) closeTagManager({ commit: false });
+			},
+		});
+		const footer = h("div", { class: "hn-tagmgr-footer" }, [
+			cancelBtn,
+			saveBtn,
+		]);
+
+		const list = h("div", { class: "hn-tagmgr-list" });
+
+		const filterInput = h("input", {
+			type: "text",
+			class: "hn-tagmgr-filter",
+			placeholder: "Filter tags…",
+		});
+		filterInput.addEventListener("input", () => {
+			filter = filterInput.value;
+			renderOverlay();
+		});
+
+		const sortNameBtn = h("button", {
+			class: "hn-tagmgr-sort-btn active",
+			text: "Name (A→Z)",
+			onclick: () => {
+				sortMode = "name";
+				renderOverlay();
+			},
+		});
+		const sortCountBtn = h("button", {
+			class: "hn-tagmgr-sort-btn",
+			text: "Uses (0 first)",
+			onclick: () => {
+				sortMode = "count";
+				renderOverlay();
+			},
+		});
+
+		const controls = h("div", { class: "hn-tagmgr-controls" }, [
+			filterInput,
+			h("div", { class: "hn-tagmgr-sort" }, [sortNameBtn, sortCountBtn]),
+		]);
+
+		const headerCount = h("span", { class: "hn-tagmgr-header-count" });
+		overlay.appendChild(
+			h("div", { class: "hn-tagmgr-header" }, [
+				h("span", { text: "Manage tags" }),
+				headerCount,
+			]),
+		);
+		overlay.appendChild(controls);
+		overlay.appendChild(list);
+		overlay.appendChild(footer);
+
+		// Derive the draft from the rows map each time. Each row in `rows`
+		// carries its originalName (the map key) and its current edited form;
+		// pure helpers stitch the final shape together.
+		function computeDraft() {
+			let d = {
+				tags: JSON.parse(JSON.stringify(live.tags || {})),
+				colors: JSON.parse(JSON.stringify(live.colors || {})),
+				schemaVersion: 1,
+				ratings: live.ratings || {},
+				cache: live.cache || {},
+			};
+			for (const [originalName, row] of rows) {
+				if (row.pendingRemoval) {
+					d = removeTagInState(d, originalName);
+				} else if (row.currentName !== originalName) {
+					d = renameTagInState(d, originalName, row.currentName);
+				}
+			}
+			return d;
+		}
+
+		function renderOverlay() {
+			const computed = computeDraft();
+			draft.tags = computed.tags;
+			draft.colors = computed.colors;
+
+			const counts = countsFromState(computed);
+			const needle = filter.trim().toLowerCase();
+
+			const entries = [...rows.entries()]
+				.map(([originalName, row]) => {
+					const displayName = row.pendingRemoval
+						? originalName
+						: row.currentName;
+					const count = row.pendingRemoval ? 0 : counts[row.currentName] || 0;
+					const color =
+						computed.colors[row.currentName] ||
+						live.colors[originalName] ||
+						null;
+					return { originalName, row, displayName, count, color };
+				})
+				.filter(({ displayName }) =>
+					needle === "" ? true : displayName.toLowerCase().includes(needle),
+				);
+
+			entries.sort((a, b) => {
+				if (sortMode === "count") {
+					if (a.count !== b.count) return a.count - b.count;
+				}
+				return a.displayName
+					.toLowerCase()
+					.localeCompare(b.displayName.toLowerCase());
+			});
+
+			sortNameBtn.classList.toggle("active", sortMode === "name");
+			sortCountBtn.classList.toggle("active", sortMode === "count");
+			headerCount.textContent = `${rows.size} tags`;
+
+			list.replaceChildren();
+			for (const entry of entries) {
+				list.appendChild(buildRow(entry));
+			}
+		}
+
+		function buildRow({ originalName, row, displayName, count, color }) {
+			const dirty = row.pendingRemoval || row.currentName !== originalName;
+			const rowEl = h("div", {
+				class: [
+					"hn-tagmgr-row",
+					dirty ? "dirty" : "",
+					row.pendingRemoval ? "removed" : "",
+				]
+					.filter(Boolean)
+					.join(" "),
+			});
+
+			const swatch = h("span", { class: "hn-tagmgr-swatch" });
+			if (color?.bgColor) swatch.style.backgroundColor = color.bgColor;
+
+			const nameEl = h("span", {
+				class: "hn-tagmgr-name",
+				text: displayName,
+			});
+			if (color?.bgColor) nameEl.style.backgroundColor = color.bgColor;
+			if (color?.textColor) nameEl.style.color = color.textColor;
+
+			const countEl = h("span", {
+				class: `hn-tagmgr-count${count === 0 ? " zero" : ""}`,
+				text: String(count),
+			});
+
+			const icons = h("div", { class: "hn-tagmgr-icons" });
+			const editIcon = h("span", {
+				class: "hn-tagmgr-icon",
+				title: "Rename tag",
+				text: "\u270F\uFE0F", // ✏️
+				onclick: () => {
+					// Swap name span for an input; Enter/blur commits, Escape
+					// cancels the field (does not close the overlay).
+					const input = h("input", {
+						type: "text",
+						class: "hn-tagmgr-name-input",
+						value: row.currentName,
+					});
+					nameEl.replaceWith(input);
+					input.focus();
+					input.select();
+
+					const commit = () => {
+						const proposed = input.value.trim();
+						if (!proposed || proposed === row.currentName) {
+							renderOverlay();
+							return;
+						}
+						// Collision check: does another row currently carry `proposed`?
+						const collidesWith = [...rows.entries()].find(
+							([orig, r]) =>
+								orig !== originalName &&
+								!r.pendingRemoval &&
+								r.currentName === proposed,
+						);
+						if (collidesWith) {
+							const srcCount =
+								countsFromState(computeDraft())[row.currentName] || 0;
+							if (
+								!confirm(
+									`Merge "${row.currentName}" into "${proposed}"? ${srcCount} user${srcCount === 1 ? "" : "s"} will be updated.`,
+								)
+							) {
+								renderOverlay();
+								return;
+							}
+							// Drop the source row: the destination absorbs it.
+							rows.delete(originalName);
+						} else {
+							row.currentName = proposed;
+						}
+						renderOverlay();
+					};
+
+					let cancelled = false;
+					input.addEventListener("keydown", (e) => {
+						if (e.key === "Enter") {
+							e.preventDefault();
+							commit();
+						} else if (e.key === "Escape") {
+							e.preventDefault();
+							cancelled = true;
+							renderOverlay();
+						}
+					});
+					input.addEventListener("blur", () => {
+						if (cancelled) return;
+						commit();
+					});
+				},
+			});
+			icons.appendChild(editIcon);
+
+			if (dirty) {
+				const undoIcon = h("span", {
+					class: "hn-tagmgr-icon",
+					title: "Undo changes to this row",
+					text: "\u21A9", // ↩
+					onclick: () => {
+						row.currentName = originalName;
+						row.pendingRemoval = false;
+						renderOverlay();
+					},
+				});
+				icons.appendChild(undoIcon);
+			}
+
+			const removeIcon = h("span", {
+				class: "hn-tagmgr-icon",
+				title: row.pendingRemoval ? "Keep tag" : "Remove tag",
+				text: "\u2716", // ✖
+				onclick: () => {
+					row.pendingRemoval = !row.pendingRemoval;
+					renderOverlay();
+				},
+			});
+			icons.appendChild(removeIcon);
+
+			rowEl.appendChild(swatch);
+			rowEl.appendChild(nameEl);
+			rowEl.appendChild(countEl);
+			rowEl.appendChild(icons);
+			return rowEl;
+		}
+
+		renderOverlay();
 	}
 
 	// Sync state from other tabs. GM_addValueChangeListener fires whenever

@@ -102,3 +102,43 @@ test("store: everything lives under a single backend key", () => {
 	const keys = Object.keys(backend.data);
 	assert.equal(keys.length, 1, `expected 1 key, got: ${keys.join(",")}`);
 });
+
+// Single-shot replacement of the tags and colors slices. Must leave
+// ratings and cache untouched and must produce exactly one backend
+// write, so cross-tab listeners fire once per user Save action.
+test("store: replaceTagsAndColors writes once, leaves ratings/cache alone", () => {
+	const backend = makeFakeBackend();
+	let writes = 0;
+	const countingBackend = {
+		get: backend.get,
+		set: (k, v) => {
+			writes += 1;
+			backend.set(k, v);
+		},
+		list: backend.list,
+		data: backend.data,
+	};
+	const store = createStore(countingBackend);
+	store.setRating("alice", 5);
+	store.setCachedUser("alice", { created: 1, karma: 2 }, 12345);
+	const before = writes;
+
+	store.replaceTagsAndColors(
+		{ alice: ["x"], bob: ["x", "y"] },
+		{
+			x: { bgColor: "xc", textColor: "black" },
+			y: { bgColor: "yc", textColor: "black" },
+		},
+	);
+
+	assert.equal(writes - before, 1, "replaceTagsAndColors should write once");
+
+	const persisted = JSON.parse(backend.data.hn_state);
+	assert.deepEqual(persisted.tags, { alice: ["x"], bob: ["x", "y"] });
+	assert.deepEqual(persisted.colors, {
+		x: { bgColor: "xc", textColor: "black" },
+		y: { bgColor: "yc", textColor: "black" },
+	});
+	assert.equal(persisted.ratings.alice, 5);
+	assert.equal(persisted.cache.alice.created, 1);
+});
