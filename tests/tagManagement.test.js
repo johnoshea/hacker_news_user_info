@@ -109,7 +109,9 @@ test("removeTagInState: strips tag from all users and deletes color", () => {
 		bar: { bgColor: "barc", textColor: "black" },
 	});
 	assert.deepEqual(next.ratings, { alice: 2 });
-	assert.deepEqual(next.cache, { alice: { created: 1, karma: 2, fetchedAt: 3 } });
+	assert.deepEqual(next.cache, {
+		alice: { created: 1, karma: 2, fetchedAt: 3 },
+	});
 });
 
 // Removal of a tag that isn't present anywhere is a no-op and returns
