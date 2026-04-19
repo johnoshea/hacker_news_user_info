@@ -1201,23 +1201,148 @@ if (typeof GM_addStyle !== "undefined") {
 		});
 		const footer = h("div", { class: "hn-tagmgr-footer" }, [cancelBtn, saveBtn]);
 
-		// Placeholder body — replaced by renderOverlay in the next task.
-		const body = h("div", { class: "hn-tagmgr-list" });
+		const list = h("div", { class: "hn-tagmgr-list" });
 
+		const filterInput = h("input", {
+			type: "text",
+			class: "hn-tagmgr-filter",
+			placeholder: "Filter tags…",
+		});
+		filterInput.addEventListener("input", () => {
+			filter = filterInput.value;
+			renderOverlay();
+		});
+
+		const sortNameBtn = h("button", {
+			class: "hn-tagmgr-sort-btn active",
+			text: "Name (A→Z)",
+			onclick: () => {
+				sortMode = "name";
+				renderOverlay();
+			},
+		});
+		const sortCountBtn = h("button", {
+			class: "hn-tagmgr-sort-btn",
+			text: "Uses (0 first)",
+			onclick: () => {
+				sortMode = "count";
+				renderOverlay();
+			},
+		});
+
+		const controls = h("div", { class: "hn-tagmgr-controls" }, [
+			filterInput,
+			h("div", { class: "hn-tagmgr-sort" }, [sortNameBtn, sortCountBtn]),
+		]);
+
+		const headerCount = h("span", { class: "hn-tagmgr-header-count" });
 		overlay.appendChild(
 			h("div", { class: "hn-tagmgr-header" }, [
 				h("span", { text: "Manage tags" }),
-				h("span", { class: "hn-tagmgr-header-count", text: `${allNames.size} tags` }),
+				headerCount,
 			]),
 		);
-		overlay.appendChild(body);
+		overlay.appendChild(controls);
+		overlay.appendChild(list);
 		overlay.appendChild(footer);
 
-		// Expose internal state onto the overlay element for the next task
-		// (which installs the list rendering). Using a closed-over reference
-		// would require folding all of Tasks 8-12 into one commit; this lets
-		// each task be a tight, testable commit.
-		overlay._tagmgr = { live, draft, rows, body, getFilter: () => filter, setFilter: (v) => { filter = v; }, getSortMode: () => sortMode, setSortMode: (v) => { sortMode = v; } };
+		// Derive the draft from the rows map each time. Each row in `rows`
+		// carries its originalName (the map key) and its current edited form;
+		// pure helpers stitch the final shape together.
+		function computeDraft() {
+			let d = {
+				tags: JSON.parse(JSON.stringify(live.tags || {})),
+				colors: JSON.parse(JSON.stringify(live.colors || {})),
+				schemaVersion: 1,
+				ratings: live.ratings || {},
+				cache: live.cache || {},
+			};
+			for (const [originalName, row] of rows) {
+				if (row.pendingRemoval) {
+					d = removeTagInState(d, originalName);
+				} else if (row.currentName !== originalName) {
+					d = renameTagInState(d, originalName, row.currentName);
+				}
+			}
+			return d;
+		}
+
+		function renderOverlay() {
+			const computed = computeDraft();
+			draft.tags = computed.tags;
+			draft.colors = computed.colors;
+
+			const counts = countsFromState(computed);
+			const needle = filter.trim().toLowerCase();
+
+			const entries = [...rows.entries()]
+				.map(([originalName, row]) => {
+					const displayName = row.pendingRemoval ? originalName : row.currentName;
+					const count = row.pendingRemoval
+						? 0
+						: counts[row.currentName] || 0;
+					const color = computed.colors[row.currentName] || live.colors[originalName] || null;
+					return { originalName, row, displayName, count, color };
+				})
+				.filter(({ displayName }) =>
+					needle === "" ? true : displayName.toLowerCase().includes(needle),
+				);
+
+			entries.sort((a, b) => {
+				if (sortMode === "count") {
+					if (a.count !== b.count) return a.count - b.count;
+				}
+				return a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase());
+			});
+
+			sortNameBtn.classList.toggle("active", sortMode === "name");
+			sortCountBtn.classList.toggle("active", sortMode === "count");
+			headerCount.textContent = `${rows.size} tags`;
+
+			list.replaceChildren();
+			for (const entry of entries) {
+				list.appendChild(buildRow(entry));
+			}
+		}
+
+		function buildRow({ originalName, row, displayName, count, color }) {
+			const dirty = row.pendingRemoval || row.currentName !== originalName;
+			const rowEl = h("div", {
+				class: [
+					"hn-tagmgr-row",
+					dirty ? "dirty" : "",
+					row.pendingRemoval ? "removed" : "",
+				]
+					.filter(Boolean)
+					.join(" "),
+			});
+
+			const swatch = h("span", { class: "hn-tagmgr-swatch" });
+			if (color?.bgColor) swatch.style.backgroundColor = color.bgColor;
+
+			const nameEl = h("span", {
+				class: "hn-tagmgr-name",
+				text: displayName,
+			});
+			if (color?.bgColor) nameEl.style.backgroundColor = color.bgColor;
+			if (color?.textColor) nameEl.style.color = color.textColor;
+
+			const countEl = h("span", {
+				class: `hn-tagmgr-count${count === 0 ? " zero" : ""}`,
+				text: String(count),
+			});
+
+			const icons = h("div", { class: "hn-tagmgr-icons" });
+			// Individual icon wiring arrives in Tasks 10–12.
+
+			rowEl.appendChild(swatch);
+			rowEl.appendChild(nameEl);
+			rowEl.appendChild(countEl);
+			rowEl.appendChild(icons);
+			return rowEl;
+		}
+
+		renderOverlay();
 	}
 
 	// Sync state from other tabs. GM_addValueChangeListener fires whenever
