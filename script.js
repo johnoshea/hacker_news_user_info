@@ -1105,6 +1105,121 @@ if (typeof GM_addStyle !== "undefined") {
 		});
 	}
 
+	// Single-instance tag-management overlay. The overlay holds a draft
+	// snapshot of {tags, colors}; edits mutate the draft via pure helpers,
+	// and Save writes the draft back atomically.
+	let tagManagerOpen = false;
+
+	function isDraftDirty(liveSnapshot, draft) {
+		return (
+			JSON.stringify(liveSnapshot.tags || {}) !== JSON.stringify(draft.tags) ||
+			JSON.stringify(liveSnapshot.colors || {}) !== JSON.stringify(draft.colors)
+		);
+	}
+
+	// biome-ignore lint/correctness/noUnusedVariables: wired in Task 12
+	function openTagManager() {
+		if (tagManagerOpen) return;
+		tagManagerOpen = true;
+
+		const live = store._snapshot();
+		const draft = {
+			tags: JSON.parse(JSON.stringify(live.tags || {})),
+			colors: JSON.parse(JSON.stringify(live.colors || {})),
+		};
+
+		// Per-row state keyed by the tag name as it existed when the overlay
+		// opened. Undo on a row reverts that row's changes only.
+		const rows = new Map(); // originalName -> { currentName, pendingRemoval }
+		const allNames = new Set([
+			...Object.keys(live.colors || {}),
+			...Object.values(live.tags || {}).flat(),
+		]);
+		for (const name of allNames) {
+			rows.set(name, { currentName: name, pendingRemoval: false });
+		}
+
+		let filter = "";
+		let sortMode = "name"; // "name" | "count"
+
+		const catcher = h("div", { class: "hn-tagmgr-catcher" });
+		const overlay = h("div", { class: "hn-tagmgr-overlay" });
+		document.body.appendChild(catcher);
+		document.body.appendChild(overlay);
+
+		function closeTagManager({ commit }) {
+			if (commit) {
+				if (isDraftDirty(live, draft)) {
+					store.replaceTagsAndColors(draft.tags, draft.colors);
+					store._invalidate();
+					const visibleUsers = new Set();
+					for (const el of document.querySelectorAll("[data-hn-user]")) {
+						visibleUsers.add(el.dataset.hnUser);
+					}
+					for (const username of visibleUsers) rerenderUserTags(username);
+				}
+			}
+			document.removeEventListener("keydown", onKeyDown);
+			catcher.remove();
+			overlay.remove();
+			tagManagerOpen = false;
+		}
+
+		function confirmDiscardIfDirty() {
+			if (!isDraftDirty(live, draft)) return true;
+			return confirm("Discard unsaved tag changes?");
+		}
+
+		function onKeyDown(e) {
+			if (e.key !== "Escape") return;
+			// If focus is inside a rename input, let the row handle its own
+			// Escape (cancels the field, doesn't close the overlay).
+			const active = document.activeElement;
+			if (active?.classList.contains("hn-tagmgr-name-input")) return;
+			e.preventDefault();
+			if (confirmDiscardIfDirty()) closeTagManager({ commit: false });
+		}
+		document.addEventListener("keydown", onKeyDown);
+
+		catcher.addEventListener("click", () => {
+			if (confirmDiscardIfDirty()) closeTagManager({ commit: false });
+		});
+
+		// Footer (Save / Cancel) wired immediately; list + controls wired by
+		// later tasks via renderOverlay().
+		const saveBtn = h("button", {
+			class: "hn-tagmgr-btn primary",
+			text: "Save",
+			onclick: () => closeTagManager({ commit: true }),
+		});
+		const cancelBtn = h("button", {
+			class: "hn-tagmgr-btn",
+			text: "Cancel",
+			onclick: () => {
+				if (confirmDiscardIfDirty()) closeTagManager({ commit: false });
+			},
+		});
+		const footer = h("div", { class: "hn-tagmgr-footer" }, [cancelBtn, saveBtn]);
+
+		// Placeholder body — replaced by renderOverlay in the next task.
+		const body = h("div", { class: "hn-tagmgr-list" });
+
+		overlay.appendChild(
+			h("div", { class: "hn-tagmgr-header" }, [
+				h("span", { text: "Manage tags" }),
+				h("span", { class: "hn-tagmgr-header-count", text: `${allNames.size} tags` }),
+			]),
+		);
+		overlay.appendChild(body);
+		overlay.appendChild(footer);
+
+		// Expose internal state onto the overlay element for the next task
+		// (which installs the list rendering). Using a closed-over reference
+		// would require folding all of Tasks 8-12 into one commit; this lets
+		// each task be a tight, testable commit.
+		overlay._tagmgr = { live, draft, rows, body, getFilter: () => filter, setFilter: (v) => { filter = v; }, getSortMode: () => sortMode, setSortMode: (v) => { sortMode = v; } };
+	}
+
 	// Sync state from other tabs. GM_addValueChangeListener fires whenever
 	// another tab writes to the same GM storage key. We invalidate the
 	// in-memory cache and re-render every user visible on this page.
