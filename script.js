@@ -1333,7 +1333,67 @@ if (typeof GM_addStyle !== "undefined") {
 			});
 
 			const icons = h("div", { class: "hn-tagmgr-icons" });
-			// Individual icon wiring arrives in Tasks 10–12.
+			const editIcon = h("span", {
+				class: "hn-tagmgr-icon",
+				title: "Rename tag",
+				text: "\u270F\uFE0F", // ✏️
+				onclick: () => {
+					// Swap name span for an input; Enter/blur commits, Escape
+					// cancels the field (does not close the overlay).
+					const input = h("input", {
+						type: "text",
+						class: "hn-tagmgr-name-input",
+						value: row.currentName,
+					});
+					nameEl.replaceWith(input);
+					input.focus();
+					input.select();
+
+					const commit = () => {
+						const proposed = input.value.trim();
+						if (!proposed || proposed === row.currentName) {
+							renderOverlay();
+							return;
+						}
+						// Collision check: does another row currently carry `proposed`?
+						const collidesWith = [...rows.entries()].find(
+							([orig, r]) =>
+								orig !== originalName &&
+								!r.pendingRemoval &&
+								r.currentName === proposed,
+						);
+						if (collidesWith) {
+							const srcCount = countsFromState(computeDraft())[row.currentName] || 0;
+							if (!confirm(`Merge "${row.currentName}" into "${proposed}"? ${srcCount} user${srcCount === 1 ? "" : "s"} will be updated.`)) {
+								renderOverlay();
+								return;
+							}
+							// Drop the source row: the destination absorbs it.
+							rows.delete(originalName);
+						} else {
+							row.currentName = proposed;
+						}
+						renderOverlay();
+					};
+
+					let cancelled = false;
+					input.addEventListener("keydown", (e) => {
+						if (e.key === "Enter") {
+							e.preventDefault();
+							commit();
+						} else if (e.key === "Escape") {
+							e.preventDefault();
+							cancelled = true;
+							renderOverlay();
+						}
+					});
+					input.addEventListener("blur", () => {
+						if (cancelled) return;
+						commit();
+					});
+				},
+			});
+			icons.appendChild(editIcon);
 
 			rowEl.appendChild(swatch);
 			rowEl.appendChild(nameEl);
