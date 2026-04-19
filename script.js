@@ -709,25 +709,68 @@ if (typeof GM_addStyle !== "undefined") {
 		});
 		input.dataset.hnUser = username;
 
-		let debounce;
-		input.addEventListener("input", () => {
-			clearTimeout(debounce);
-			debounce = setTimeout(() => {
-				const names = input.value
-					.split(",")
-					.map((t) => t.trim())
-					.filter((t) => t.length > 0);
-				const updated = names.map((name) => {
-					const color = ensureTagColor(name);
-					return {
-						value: name,
-						bgColor: color.bgColor,
-						textColor: color.textColor,
-					};
-				});
-				store.setUserTags(username, updated);
-				rerenderUserTags(username);
-			}, 500);
+		// Keystrokes update a live preview only; the store is written on blur
+		// or Enter. Writing per-keystroke was persisting every partial string
+		// the user typed (e.g. "Are" -> "Areg" -> "Argen" -> "Argentinian"
+		// all ended up as distinct saved tags), which polluted both the
+		// user's tag list and the shared colors map.
+		const previewColors = new Map();
+		const previewColorFor = (name) => {
+			const real = store.getTagColor(name);
+			if (real?.bgColor) return real;
+			if (previewColors.has(name)) return previewColors.get(name);
+			const color = { bgColor: randomPastelColor(), textColor: "black" };
+			previewColors.set(name, color);
+			return color;
+		};
+
+		const parseNames = () =>
+			input.value
+				.split(",")
+				.map((t) => t.trim())
+				.filter((t) => t.length > 0);
+
+		const renderPreview = () => {
+			const esc = CSS.escape(username);
+			const names = parseNames();
+			for (const group of document.querySelectorAll(
+				`.hn-tag-group[data-hn-user="${esc}"]`,
+			)) {
+				group.replaceChildren();
+				for (const name of names) {
+					const color = previewColorFor(name);
+					group.appendChild(
+						renderTagSpan(username, {
+							value: name,
+							bgColor: color.bgColor,
+							textColor: color.textColor,
+						}),
+					);
+				}
+			}
+		};
+
+		const commit = () => {
+			const names = parseNames();
+			const updated = names.map((name) => {
+				const color = ensureTagColor(name);
+				return {
+					value: name,
+					bgColor: color.bgColor,
+					textColor: color.textColor,
+				};
+			});
+			store.setUserTags(username, updated);
+			rerenderUserTags(username);
+			previewColors.clear();
+		};
+
+		input.addEventListener("input", renderPreview);
+		input.addEventListener("blur", commit);
+		input.addEventListener("keydown", (e) => {
+			if (e.key !== "Enter") return;
+			e.preventDefault();
+			input.blur(); // triggers commit via the blur listener
 		});
 		return input;
 	}
