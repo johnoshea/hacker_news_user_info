@@ -1,6 +1,12 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { renameTagInState, removeTagInState } = require("./_load");
+const {
+	computeTagManagerDraft,
+	getTagManagerSaveAction,
+	removeTagInState,
+	renameTagInState,
+	renameTagManagerRow,
+} = require("./_load");
 
 // Pure rename: when the destination name does not exist, the tag's color
 // entry moves to the new name and every user carrying the old name has it
@@ -182,4 +188,76 @@ test("renameTagInState + removeTagInState compose", () => {
 		Engineer: { bgColor: "dest", textColor: "black" },
 		rustacean: { bgColor: "rst", textColor: "black" },
 	});
+});
+
+test("renameTagManagerRow: keeps source row when renaming into existing name", () => {
+	const rows = new Map([
+		["engineer", { currentName: "engineer", pendingRemoval: false }],
+		["Engineer", { currentName: "Engineer", pendingRemoval: false }],
+	]);
+
+	const next = renameTagManagerRow(rows, "engineer", "Engineer");
+
+	assert.equal(next.has("engineer"), true);
+	assert.equal(next.get("engineer").currentName, "Engineer");
+	assert.equal(next.get("Engineer").currentName, "Engineer");
+});
+
+test("computeTagManagerDraft: row rename into existing name merges on save", () => {
+	const live = {
+		schemaVersion: 1,
+		ratings: {},
+		tags: {
+			alice: ["engineer", "rustacean"],
+			bob: ["Engineer", "engineer"],
+			carol: ["Engineer"],
+		},
+		colors: {
+			engineer: { bgColor: "src", textColor: "black" },
+			Engineer: { bgColor: "dest", textColor: "black" },
+			rustacean: { bgColor: "rst", textColor: "black" },
+		},
+		cache: {},
+	};
+	const rows = new Map([
+		["engineer", { currentName: "Engineer", pendingRemoval: false }],
+		["Engineer", { currentName: "Engineer", pendingRemoval: false }],
+		["rustacean", { currentName: "rustacean", pendingRemoval: false }],
+	]);
+
+	const draft = computeTagManagerDraft(live, rows);
+
+	assert.deepEqual(draft.tags, {
+		alice: ["Engineer", "rustacean"],
+		bob: ["Engineer"],
+		carol: ["Engineer"],
+	});
+	assert.deepEqual(draft.colors, {
+		Engineer: { bgColor: "dest", textColor: "black" },
+		rustacean: { bgColor: "rst", textColor: "black" },
+	});
+});
+
+test("getTagManagerSaveAction: blocks dirty save after remote invalidation", () => {
+	const live = {
+		schemaVersion: 1,
+		ratings: {},
+		tags: { alice: ["engineer"] },
+		colors: {
+			engineer: { bgColor: "src", textColor: "black" },
+			Engineer: { bgColor: "dest", textColor: "black" },
+		},
+		cache: {},
+	};
+	const draft = computeTagManagerDraft(
+		live,
+		new Map([
+			["engineer", { currentName: "Engineer", pendingRemoval: false }],
+			["Engineer", { currentName: "Engineer", pendingRemoval: false }],
+		]),
+	);
+
+	assert.equal(getTagManagerSaveAction(live, draft, false), "commit");
+	assert.equal(getTagManagerSaveAction(live, draft, true), "blocked-stale");
+	assert.equal(getTagManagerSaveAction(live, live, true), "noop");
 });

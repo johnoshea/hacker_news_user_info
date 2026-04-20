@@ -49,6 +49,22 @@ test("store: setUserTags hydrates with stored tag colors", () => {
 	assert.equal(tags[0].textColor, "black");
 });
 
+test("store: setUserTags trims whitespace and de-dupes per-user tags", () => {
+	const store = createStore(makeFakeBackend());
+	store.setUserTags("alice", [
+		{ value: " expert ", bgColor: "hsl(10,50%,80%)", textColor: "black" },
+		{ value: "expert" },
+		{ value: "  " },
+		{ value: "helper", bgColor: "hsl(20,50%,80%)", textColor: "black" },
+		{ value: "helper" },
+	]);
+
+	assert.deepEqual(store.getUserTags("alice"), [
+		{ value: "expert", bgColor: "hsl(10,50%,80%)", textColor: "black" },
+		{ value: "helper", bgColor: "hsl(20,50%,80%)", textColor: "black" },
+	]);
+});
+
 test("store: tag colors are shared across users", () => {
 	const store = createStore(makeFakeBackend());
 	store.setUserTags("alice", [
@@ -90,6 +106,28 @@ test("store: _invalidate forces re-read from backend", () => {
 	// After invalidation, the store re-reads the backend and sees the update.
 	store._invalidate();
 	assert.equal(store.getRating("alice"), 42);
+});
+
+test("store: loading persisted state normalizes whitespace variants and duplicates", () => {
+	const backend = makeFakeBackend({
+		hn_state: JSON.stringify({
+			schemaVersion: 1,
+			ratings: {},
+			tags: { alice: [" expert ", "expert", "", "helper", "helper"] },
+			colors: {
+				expert: { bgColor: "hsl(10,50%,80%)", textColor: "black" },
+				helper: { bgColor: "hsl(20,50%,80%)", textColor: "black" },
+			},
+			cache: {},
+		}),
+	});
+
+	const store = createStore(backend);
+
+	assert.deepEqual(store.getUserTags("alice"), [
+		{ value: "expert", bgColor: "hsl(10,50%,80%)", textColor: "black" },
+		{ value: "helper", bgColor: "hsl(20,50%,80%)", textColor: "black" },
+	]);
 });
 
 test("store: everything lives under a single backend key", () => {

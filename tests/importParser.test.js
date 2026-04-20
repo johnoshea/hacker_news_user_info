@@ -61,6 +61,25 @@ test("parseImport: normalized format with orphan tag color is preserved", () => 
 	});
 });
 
+test("parseImport: normalized format trims and de-dupes imported tag names", () => {
+	const imported = {
+		customTags: {
+			expert: { bgColor: "hsl(10,50%,80%)", textColor: "black" },
+			helper: { bgColor: "hsl(20,50%,80%)", textColor: "black" },
+		},
+		users: {
+			alice: {
+				rating: 1,
+				tags: [" expert ", "expert", "", "helper", "helper"],
+			},
+		},
+	};
+
+	const state = parseImport(imported);
+
+	assert.deepEqual(state.tags.alice, ["expert", "helper"]);
+});
+
 test("stateToExport: produces normalized format consumable by parseImport", () => {
 	const state = {
 		schemaVersion: 1,

@@ -120,3 +120,23 @@ test("migration: malformed legacy JSON is skipped, not fatal", () => {
 	assert.equal(store.getRating("alice"), 2);
 	assert.deepEqual(store.getUserTags("alice"), []);
 });
+
+test("migration: trims and de-dupes legacy tag names", () => {
+	const backend = makeListingBackend({
+		hn_custom_tags_alice: JSON.stringify([
+			{ value: " expert ", bgColor: "hsl(10,50%,80%)", textColor: "black" },
+			{ value: "expert" },
+			{ value: "" },
+			{ value: "helper", bgColor: "hsl(20,50%,80%)", textColor: "black" },
+			{ value: "helper" },
+		]),
+	});
+
+	migrateLegacyKeys(backend);
+	const store = createStore(backend);
+
+	assert.deepEqual(store.getUserTags("alice"), [
+		{ value: "expert", bgColor: "hsl(10,50%,80%)", textColor: "black" },
+		{ value: "helper", bgColor: "hsl(20,50%,80%)", textColor: "black" },
+	]);
+});

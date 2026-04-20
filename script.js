@@ -49,6 +49,78 @@ function emptyState() {
 	};
 }
 
+function normalizeTagName(tagName) {
+	return typeof tagName === "string" ? tagName.trim() : "";
+}
+
+function normalizeTagNameList(tagNames) {
+	const normalized = [];
+	const seen = new Set();
+	for (const tagName of tagNames || []) {
+		const value = normalizeTagName(tagName);
+		if (!value || seen.has(value)) continue;
+		seen.add(value);
+		normalized.push(value);
+	}
+	return normalized;
+}
+
+function normalizeTagObjects(tags) {
+	const normalized = [];
+	const indexByValue = new Map();
+
+	for (const tag of tags || []) {
+		if (!tag || typeof tag.value !== "string") continue;
+		const value = normalizeTagName(tag.value);
+		if (!value) continue;
+
+		const bgColor = tag.bgColor;
+		const textColor = bgColor ? tag.textColor || "black" : undefined;
+
+		if (!indexByValue.has(value)) {
+			indexByValue.set(value, normalized.length);
+			normalized.push({ value, bgColor, textColor });
+			continue;
+		}
+
+		const existing = normalized[indexByValue.get(value)];
+		if (!existing.bgColor && bgColor) {
+			existing.bgColor = bgColor;
+			existing.textColor = textColor;
+		}
+	}
+
+	return normalized;
+}
+
+function normalizeColorMap(colors) {
+	const normalized = {};
+	for (const [tagName, info] of Object.entries(colors || {})) {
+		const value = normalizeTagName(tagName);
+		if (!value || !info?.bgColor || Object.hasOwn(normalized, value)) continue;
+		normalized[value] = {
+			bgColor: info.bgColor,
+			textColor: info.textColor || "black",
+		};
+	}
+	return normalized;
+}
+
+function normalizeState(state) {
+	return {
+		schemaVersion: state?.schemaVersion || STATE_SCHEMA_VERSION,
+		ratings: { ...(state?.ratings || {}) },
+		tags: Object.fromEntries(
+			Object.entries(state?.tags || {}).map(([username, tagNames]) => [
+				username,
+				normalizeTagNameList(tagNames),
+			]),
+		),
+		colors: normalizeColorMap(state?.colors),
+		cache: { ...(state?.cache || {}) },
+	};
+}
+
 // Factory over a { get(key), set(key, value) } backend. Loads the consolidated
 // state on first access and writes the whole blob back on each mutation.
 // Writes are cheap because the blob is small (a few KB even for heavy users).
@@ -63,7 +135,7 @@ function createStore(backend) {
 		} else {
 			try {
 				const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-				state = { ...emptyState(), ...parsed };
+				state = normalizeState({ ...emptyState(), ...parsed });
 			} catch (_err) {
 				state = emptyState();
 			}
@@ -101,12 +173,13 @@ function createStore(backend) {
 		},
 		setUserTags(username, tags) {
 			const s = load();
-			s.tags[username] = tags.map((t) => t.value);
+			const normalized = normalizeTagObjects(tags);
+			s.tags[username] = normalized.map((t) => t.value);
 			// Record any color info that came along with the tag. If a tag already
 			// has a color, a caller-supplied color overrides it (setTagColor is the
 			// explicit "update the shared color" operation; passing a color here
 			// is how new tags get their initial color).
-			for (const t of tags) {
+			for (const t of normalized) {
 				if (t.bgColor && t.textColor) {
 					s.colors[t.value] = { bgColor: t.bgColor, textColor: t.textColor };
 				}
@@ -114,10 +187,14 @@ function createStore(backend) {
 			save();
 		},
 		getTagColor(tagName) {
-			return load().colors[tagName] || null;
+			const normalized = normalizeTagName(tagName);
+			if (!normalized) return null;
+			return load().colors[normalized] || null;
 		},
 		setTagColor(tagName, { bgColor, textColor }) {
-			load().colors[tagName] = { bgColor, textColor };
+			const normalized = normalizeTagName(tagName);
+			if (!normalized) return;
+			load().colors[normalized] = { bgColor, textColor };
 			save();
 		},
 		// User-data cache. The `now` and `ttlMs` arguments are injected so tests
@@ -226,7 +303,7 @@ function migrateLegacyKeys(backend) {
 		state.tags[username] = tagNames;
 	}
 
-	backend.set(STATE_KEY, JSON.stringify(state));
+	backend.set(STATE_KEY, JSON.stringify(normalizeState(state)));
 }
 
 // Accepts either the normalized export shape ({customTags, users}) or the
@@ -260,7 +337,7 @@ function parseImport(data) {
 				}
 			}
 		}
-		return state;
+		return normalizeState(state);
 	}
 
 	// Legacy flat-key format — mirrors migrateLegacyKeys but reads from a plain
@@ -306,7 +383,7 @@ function parseImport(data) {
 		}
 		state.tags[username] = names;
 	}
-	return state;
+	return normalizeState(state);
 }
 
 // Normalized export shape. Stable across versions so old backups stay
@@ -419,16 +496,66 @@ function countsFromState(state) {
 	return counts;
 }
 
+// Overlay row rename state lives separately from the persisted tag state.
+// Keep the state transition pure so merge behavior is testable without DOM
+// event plumbing.
+function renameTagManagerRow(rows, originalName, newName) {
+	const row = rows.get(originalName);
+	const trimmed = typeof newName === "string" ? newName.trim() : "";
+	if (!row || !trimmed || trimmed === row.currentName) return rows;
+
+	const next = new Map(rows);
+	next.set(originalName, { ...row, currentName: trimmed });
+	return next;
+}
+
+// Rebuild the overlay's draft state from the frozen live snapshot plus the
+// current per-row edits. This is the save-time source of truth for tags/colors.
+function computeTagManagerDraft(liveState, rows) {
+	let draft = {
+		schemaVersion: liveState.schemaVersion || STATE_SCHEMA_VERSION,
+		ratings: liveState.ratings || {},
+		tags: JSON.parse(JSON.stringify(liveState.tags || {})),
+		colors: JSON.parse(JSON.stringify(liveState.colors || {})),
+		cache: liveState.cache || {},
+	};
+
+	for (const [originalName, row] of rows) {
+		if (row.pendingRemoval) {
+			draft = removeTagInState(draft, originalName);
+		} else if (row.currentName !== originalName) {
+			draft = renameTagInState(draft, originalName, row.currentName);
+		}
+	}
+
+	return draft;
+}
+
+function isDraftDirty(liveSnapshot, draft) {
+	return (
+		JSON.stringify(liveSnapshot.tags || {}) !== JSON.stringify(draft.tags) ||
+		JSON.stringify(liveSnapshot.colors || {}) !== JSON.stringify(draft.colors)
+	);
+}
+
+function getTagManagerSaveAction(liveSnapshot, draft, isStale) {
+	if (!isDraftDirty(liveSnapshot, draft)) return "noop";
+	return isStale ? "blocked-stale" : "commit";
+}
+
 // Node test export. In the userscript environment `module` is undefined and
 // this block is a no-op.
 if (typeof module !== "undefined" && module.exports) {
 	module.exports = {
+		computeTagManagerDraft,
+		getTagManagerSaveAction,
 		timeSince,
 		createStore,
 		migrateLegacyKeys,
 		parseImport,
 		stateToExport,
 		renameTagInState,
+		renameTagManagerRow,
 		removeTagInState,
 		countsFromState,
 	};
@@ -786,10 +913,12 @@ if (typeof GM_addStyle !== "undefined") {
 	}
 
 	function ensureTagColor(tagName) {
-		const existing = store.getTagColor(tagName);
+		const normalized = normalizeTagName(tagName);
+		if (!normalized) return null;
+		const existing = store.getTagColor(normalized);
 		if (existing?.bgColor) return existing;
 		const color = { bgColor: randomPastelColor(), textColor: "black" };
-		store.setTagColor(tagName, color);
+		store.setTagColor(normalized, color);
 		return color;
 	}
 
@@ -886,13 +1015,14 @@ if (typeof GM_addStyle !== "undefined") {
 			onclick: (e) => {
 				e.stopPropagation();
 				const newName = prompt("Edit tag name:", tag.value);
-				if (!newName || newName === tag.value) return;
+				const normalizedName = normalizeTagName(newName);
+				if (!normalizedName || normalizedName === tag.value) return;
 				const current = store.getUserTags(username);
-				const color = ensureTagColor(newName);
+				const color = ensureTagColor(normalizedName);
 				const updated = current.map((t) =>
 					t.value === tag.value
 						? {
-								value: newName,
+								value: normalizedName,
 								bgColor: color.bgColor,
 								textColor: color.textColor,
 							}
@@ -962,11 +1092,7 @@ if (typeof GM_addStyle !== "undefined") {
 			return color;
 		};
 
-		const parseNames = () =>
-			input.value
-				.split(",")
-				.map((t) => t.trim())
-				.filter((t) => t.length > 0);
+		const parseNames = () => normalizeTagNameList(input.value.split(","));
 
 		const renderPreview = () => {
 			const esc = CSS.escape(username);
@@ -1162,13 +1288,7 @@ if (typeof GM_addStyle !== "undefined") {
 	// snapshot of {tags, colors}; edits mutate the draft via pure helpers,
 	// and Save writes the draft back atomically.
 	let tagManagerOpen = false;
-
-	function isDraftDirty(liveSnapshot, draft) {
-		return (
-			JSON.stringify(liveSnapshot.tags || {}) !== JSON.stringify(draft.tags) ||
-			JSON.stringify(liveSnapshot.colors || {}) !== JSON.stringify(draft.colors)
-		);
-	}
+	let activeTagManager = null;
 
 	function openTagManager() {
 		if (tagManagerOpen) return;
@@ -1182,7 +1302,7 @@ if (typeof GM_addStyle !== "undefined") {
 
 		// Per-row state keyed by the tag name as it existed when the overlay
 		// opened. Undo on a row reverts that row's changes only.
-		const rows = new Map(); // originalName -> { currentName, pendingRemoval }
+		let rows = new Map(); // originalName -> { currentName, pendingRemoval }
 		const allNames = new Set([
 			...Object.keys(live.colors || {}),
 			...Object.values(live.tags || {}).flat(),
@@ -1193,15 +1313,30 @@ if (typeof GM_addStyle !== "undefined") {
 
 		let filter = "";
 		let sortMode = "name"; // "name" | "count"
+		let isStale = false;
 
 		const catcher = h("div", { class: "hn-tagmgr-catcher" });
 		const overlay = h("div", { class: "hn-tagmgr-overlay" });
 		document.body.appendChild(catcher);
 		document.body.appendChild(overlay);
+		activeTagManager = {
+			markStale() {
+				if (isStale) return;
+				isStale = true;
+				renderOverlay();
+			},
+		};
 
 		function closeTagManager({ commit }) {
 			if (commit) {
-				if (isDraftDirty(live, draft)) {
+				const saveAction = getTagManagerSaveAction(live, draft, isStale);
+				if (saveAction === "blocked-stale") {
+					alert(
+						"Tags changed in another tab while this overlay was open. Close it and reopen before saving so you do not overwrite newer data.",
+					);
+					return;
+				}
+				if (saveAction === "commit") {
 					store.replaceTagsAndColors(draft.tags, draft.colors);
 					store._invalidate();
 					const visibleUsers = new Set();
@@ -1215,6 +1350,7 @@ if (typeof GM_addStyle !== "undefined") {
 			catcher.remove();
 			overlay.remove();
 			tagManagerOpen = false;
+			activeTagManager = null;
 		}
 
 		function confirmDiscardIfDirty() {
@@ -1305,21 +1441,7 @@ if (typeof GM_addStyle !== "undefined") {
 		// carries its originalName (the map key) and its current edited form;
 		// pure helpers stitch the final shape together.
 		function computeDraft() {
-			let d = {
-				tags: JSON.parse(JSON.stringify(live.tags || {})),
-				colors: JSON.parse(JSON.stringify(live.colors || {})),
-				schemaVersion: 1,
-				ratings: live.ratings || {},
-				cache: live.cache || {},
-			};
-			for (const [originalName, row] of rows) {
-				if (row.pendingRemoval) {
-					d = removeTagInState(d, originalName);
-				} else if (row.currentName !== originalName) {
-					d = renameTagInState(d, originalName, row.currentName);
-				}
-			}
-			return d;
+			return computeTagManagerDraft(live, rows);
 		}
 
 		function renderOverlay() {
@@ -1357,7 +1479,13 @@ if (typeof GM_addStyle !== "undefined") {
 
 			sortNameBtn.classList.toggle("active", sortMode === "name");
 			sortCountBtn.classList.toggle("active", sortMode === "count");
-			headerCount.textContent = `${rows.size} tags`;
+			headerCount.textContent = isStale
+				? `${rows.size} tags • changed in another tab`
+				: `${rows.size} tags`;
+			saveBtn.disabled = isStale;
+			saveBtn.title = isStale
+				? "Close and reopen the tag manager before saving."
+				: "";
 
 			list.replaceChildren();
 			for (const entry of entries) {
@@ -1433,11 +1561,8 @@ if (typeof GM_addStyle !== "undefined") {
 								renderOverlay();
 								return;
 							}
-							// Drop the source row: the destination absorbs it.
-							rows.delete(originalName);
-						} else {
-							row.currentName = proposed;
 						}
+						rows = renameTagManagerRow(rows, originalName, proposed);
 						renderOverlay();
 					};
 
@@ -1501,6 +1626,7 @@ if (typeof GM_addStyle !== "undefined") {
 	if (typeof GM_addValueChangeListener === "function") {
 		GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
 			if (!remote) return;
+			activeTagManager?.markStale();
 			store._invalidate();
 			const usernames = new Set();
 			for (const el of document.querySelectorAll("[data-hn-user]")) {
