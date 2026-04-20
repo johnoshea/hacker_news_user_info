@@ -419,6 +419,21 @@ function countsFromState(state) {
 	return counts;
 }
 
+// Parse a raw comma-separated tag string into a canonical list: each name
+// trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
+// the inline tag input so duplicates never reach setUserTags.
+function parseTagInput(text) {
+	const seen = new Set();
+	const out = [];
+	for (const part of (text || "").split(",")) {
+		const name = part.trim();
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		out.push(name);
+	}
+	return out;
+}
+
 // Node test export. In the userscript environment `module` is undefined and
 // this block is a no-op.
 if (typeof module !== "undefined" && module.exports) {
@@ -431,6 +446,7 @@ if (typeof module !== "undefined" && module.exports) {
 		renameTagInState,
 		removeTagInState,
 		countsFromState,
+		parseTagInput,
 	};
 }
 
@@ -885,7 +901,8 @@ if (typeof GM_addStyle !== "undefined") {
 			text: "\u270F\uFE0F", // ✏️
 			onclick: (e) => {
 				e.stopPropagation();
-				const newName = prompt("Edit tag name:", tag.value);
+				const raw = prompt("Edit tag name:", tag.value);
+				const newName = raw ? raw.trim() : "";
 				if (!newName || newName === tag.value) return;
 				const current = store.getUserTags(username);
 				const color = ensureTagColor(newName);
@@ -962,11 +979,7 @@ if (typeof GM_addStyle !== "undefined") {
 			return color;
 		};
 
-		const parseNames = () =>
-			input.value
-				.split(",")
-				.map((t) => t.trim())
-				.filter((t) => t.length > 0);
+		const parseNames = () => parseTagInput(input.value);
 
 		const renderPreview = () => {
 			const esc = CSS.escape(username);
@@ -1162,6 +1175,7 @@ if (typeof GM_addStyle !== "undefined") {
 	// snapshot of {tags, colors}; edits mutate the draft via pure helpers,
 	// and Save writes the draft back atomically.
 	let tagManagerOpen = false;
+	let activeTagManager = null;
 
 	function isDraftDirty(liveSnapshot, draft) {
 		return (
@@ -1193,15 +1207,30 @@ if (typeof GM_addStyle !== "undefined") {
 
 		let filter = "";
 		let sortMode = "name"; // "name" | "count"
+		let isStale = false;
 
 		const catcher = h("div", { class: "hn-tagmgr-catcher" });
 		const overlay = h("div", { class: "hn-tagmgr-overlay" });
 		document.body.appendChild(catcher);
 		document.body.appendChild(overlay);
 
+		activeTagManager = {
+			markStale() {
+				if (isStale) return;
+				isStale = true;
+				renderOverlay();
+			},
+		};
+
 		function closeTagManager({ commit }) {
 			if (commit) {
 				if (isDraftDirty(live, draft)) {
+					if (isStale) {
+						alert(
+							"Tags changed in another tab while this overlay was open. Close and reopen before saving so you do not overwrite newer data.",
+						);
+						return;
+					}
 					store.replaceTagsAndColors(draft.tags, draft.colors);
 					store._invalidate();
 					const visibleUsers = new Set();
@@ -1215,6 +1244,7 @@ if (typeof GM_addStyle !== "undefined") {
 			catcher.remove();
 			overlay.remove();
 			tagManagerOpen = false;
+			activeTagManager = null;
 		}
 
 		function confirmDiscardIfDirty() {
@@ -1357,7 +1387,13 @@ if (typeof GM_addStyle !== "undefined") {
 
 			sortNameBtn.classList.toggle("active", sortMode === "name");
 			sortCountBtn.classList.toggle("active", sortMode === "count");
-			headerCount.textContent = `${rows.size} tags`;
+			headerCount.textContent = isStale
+				? `${rows.size} tags • changed in another tab`
+				: `${rows.size} tags`;
+			saveBtn.disabled = isStale;
+			saveBtn.title = isStale
+				? "Close and reopen the tag manager before saving."
+				: "";
 
 			list.replaceChildren();
 			for (const entry of entries) {
@@ -1433,8 +1469,13 @@ if (typeof GM_addStyle !== "undefined") {
 								renderOverlay();
 								return;
 							}
-							// Drop the source row: the destination absorbs it.
-							rows.delete(originalName);
+							// Rename the source row into the destination so
+							// computeDraft() applies renameTagInState on save
+							// (which handles the merge). Drop the destination
+							// row so the overlay doesn't show two identical
+							// entries for the now-merged tag.
+							row.currentName = proposed;
+							rows.delete(collidesWith[0]);
 						} else {
 							row.currentName = proposed;
 						}
@@ -1501,6 +1542,7 @@ if (typeof GM_addStyle !== "undefined") {
 	if (typeof GM_addValueChangeListener === "function") {
 		GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
 			if (!remote) return;
+			activeTagManager?.markStale();
 			store._invalidate();
 			const usernames = new Set();
 			for (const el of document.querySelectorAll("[data-hn-user]")) {
