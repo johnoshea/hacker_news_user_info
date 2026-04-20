@@ -1,6 +1,10 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { renameTagInState, removeTagInState } = require("./_load");
+const {
+	renameTagInState,
+	removeTagInState,
+	parseTagInput,
+} = require("./_load");
 
 // Pure rename: when the destination name does not exist, the tag's color
 // entry moves to the new name and every user carrying the old name has it
@@ -182,4 +186,19 @@ test("renameTagInState + removeTagInState compose", () => {
 		Engineer: { bgColor: "dest", textColor: "black" },
 		rustacean: { bgColor: "rst", textColor: "black" },
 	});
+});
+
+// Comma-separated tag input is the primary entry point for multi-tag edits.
+// Previously parseTagInput trimmed each name but allowed duplicates to reach
+// setUserTags, which stored them verbatim - so a user who typed "x, x" ended
+// up with two identical tag pills. Dedup must happen at parse time to keep
+// per-user tag lists canonical.
+test("parseTagInput: trims, drops empties, and dedupes repeats", () => {
+	assert.deepEqual(parseTagInput("engineer,  engineer , rustacean"), [
+		"engineer",
+		"rustacean",
+	]);
+	assert.deepEqual(parseTagInput(" , ,engineer,,"), ["engineer"]);
+	assert.deepEqual(parseTagInput(""), []);
+	assert.deepEqual(parseTagInput("a,b,c"), ["a", "b", "c"]);
 });
