@@ -1534,6 +1534,7 @@ if (typeof GM_addStyle !== "undefined") {
 		}
 
 		renderOverlay();
+		filterInput.focus();
 	}
 
 	// Sync state from other tabs. GM_addValueChangeListener fires whenever

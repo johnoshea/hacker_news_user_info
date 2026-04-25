@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(node --test tests/timeSince.test.js)",
+      "Bash(node --test tests/)",
+      "Bash(node --test \"tests/*.test.js\")",
+      "Bash(node --check script.js)",
+      "Bash(command -v biome)",
+      "Bash(biome --version)",
+      "Bash(biome format:*)",
+      "Bash(biome lint:*)",
+      "Bash(biome check:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(git pull:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(just test:*)",
+      "Bash(just lint:*)",
+      "Bash(just fmt:*)",
+      "Bash(gh auth *)",
+      "Bash(gh issue *)",
+      "Bash(npm test *)",
+      "Bash(just check *)",
+      "Skill(code-review:code-review)",
+      "Bash(gh api *)",
+      "Bash(git *)"
+    ]
+  }
+}
