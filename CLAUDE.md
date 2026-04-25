@@ -11,13 +11,14 @@ A single-file Tampermonkey/Violentmonkey userscript that augments Hacker News co
 - **Test**: `just test` (or `node --test "tests/*.test.js"`)
 - **Lint**: `just lint` (or `biome lint --write script.js`)
 - **Format**: `just fmt` (or `biome format --write script.js`)
+- **All of the above**: `just check` (runs lint, fmt, and test — the pre-commit gate)
 - **Run**: load `script.js` in a userscript manager (Tampermonkey/Violentmonkey). No build step.
 
 ## Architecture
 
 `script.js` has two halves separated by a hard boundary:
 
-1. **Pure logic (top of file, above the `if (typeof GM_addStyle !== "undefined")` guard).** Contains `timeSince`, `createStore`, `migrateLegacyKeys`, `parseImport`, `stateToExport`, and their constants. Node-testable: no DOM, no GM_* references. Exported via a conditional `module.exports` block so `require("./script.js")` in Node returns the pure functions while the userscript runtime ignores the export. Tests live in `tests/` and run on `node:test`.
+1. **Pure logic (top of file, above the `if (typeof GM_addStyle !== "undefined")` guard).** Node-testable helpers: no DOM, no `GM_*` references. The authoritative list of what's testable lives in the `module.exports` block at the bottom of this section — consult it rather than duplicating the list here. Tests live in `tests/` and run on `node:test`.
 2. **Browser bootstrap (below the guard).** Does DOM manipulation, network I/O, and event wiring. Runs only inside a userscript runtime.
 
 ### Storage
@@ -46,6 +47,8 @@ On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`
 Tag/rating mutations sync across all comments by the same user on the page. Injected DOM elements carry a `data-hn-user` attribute so `rerenderUserTags(username)` and `rerenderUserRatings(username)` can query all instances and update them in one pass, rather than only updating the single comment where the action occurred.
 
 Cross-tab sync uses `GM_addValueChangeListener` on `STATE_KEY`. When another tab writes to `hn_state`, the listener fires with `remote === true`, the store's in-memory cache is invalidated via `store._invalidate()`, and all visible users are re-rendered. The listener is guarded behind a `typeof` check so the script degrades gracefully if the API is unavailable.
+
+If the tag-management overlay is open when a remote write arrives, the listener also calls `activeTagManager?.markStale()`. The overlay disables Save, shows a "changed in another tab" marker in its header, and blocks a dirty save with an alert — so the user can't silently overwrite newer data with a stale draft. They have to close and reopen the overlay to pick up the new state.
 
 ### Tag management overlay
 
