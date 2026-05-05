@@ -1,17 +1,30 @@
 # Hacker News User Info
 
-A userscript that annotates every comment on Hacker News with the author's account age, karma, a personal up/down rating, and custom colored tags.
+A userscript that makes Hacker News easier to read and annotates every comment with the author's account age, karma, a personal up/down rating, and custom colored tags.
 
-![match scope: news.ycombinator.com/item?id=*](https://img.shields.io/badge/scope-HN%20comment%20pages-ff6600)
+![match scope: news.ycombinator.com/*](https://img.shields.io/badge/scope-news.ycombinator.com-ff6600)
 
 ## What it does
 
-On any Hacker News comment page (`news.ycombinator.com/item?id=*`), each commenter's username is augmented with:
+### Site-wide (every HN page)
+
+- **Legibility tweaks**: Verdana/Arial body font, larger base size, gutters, full-width main, smaller subtext.
+- **Readable downvoted comments**: black text on a faint-grey background instead of HN's default grey-on-grey.
+- **Quoted-text rendering**: lines starting with `>` get an HN-orange left border, faint orange background, and italic body — easier to spot a quote at a glance.
+- **Hidden cruft**: rank numbers on listing pages.
+
+The legibility and quote/downvote restyling are adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
+
+### On comment pages (`news.ycombinator.com/item?id=*`)
+
+Each commenter's username is augmented with:
 
 - **Account age and karma** pulled from HN's public API, e.g. `(7 years old, 12345 karma)`.
 - **Up/down rating buttons** (▲ / ▼) that track your own opinion of the author. The rating is stored locally and persists across visits.
 - **A tag input** where you can type comma-separated tags (e.g. `expert, javascript, helpful`). Each tag gets a random pastel color the first time you use it, and reuses the same color for every user you apply it to.
 - **A tag list** in the right column showing all tags you've applied to the commenter, each with inline edit and remove icons.
+
+The page-bottom comment-submit form is also collapsed behind a **show comment box** link to keep the bottom of long threads tidy.
 
 A small draggable toolbar in the top-right corner has **Save state** and **Restore state** buttons for exporting and importing all your data as JSON.
 
@@ -21,7 +34,7 @@ A small draggable toolbar in the top-right corner has **Save state** and **Resto
    - [Violentmonkey](https://violentmonkey.github.io/) (recommended, open source)
    - [Tampermonkey](https://www.tampermonkey.net/)
 2. Open [`script.js`](./script.js) in your browser and click the "Install" prompt your manager raises, or copy the file contents into a new script in the manager's dashboard.
-3. Visit any HN comment page and the augmentations should appear.
+3. Visit Hacker News — the legibility tweaks apply on every page; the per-commenter augmentations appear on comment pages.
 
 There is no build step. The script is a single file.
 

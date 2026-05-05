@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.4
-// @description  Show account age, karma, custom tags, and author rating next to the username in Hacker News comment pages
+// @version      0.5
+// @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
-// @match        https://news.ycombinator.com/item?id=*
+// @match        https://news.ycombinator.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -419,6 +419,15 @@ function countsFromState(state) {
 	return counts;
 }
 
+// Strip a leading "> " (with any surrounding whitespace) from a quoted-comment
+// text node, then trim the result. Used by the quote-rendering pass to set
+// the body of a `<p class="quote">` directly. Defensive against non-strings
+// because the caller pulls from DOM where `.data` could be missing.
+function stripLeadingQuoteMarker(text) {
+	if (typeof text !== "string") return "";
+	return text.replace(/^\s*>\s*/, "").trim();
+}
+
 // Parse a raw comma-separated tag string into a canonical list: each name
 // trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
 // the inline tag input so duplicates never reach setUserTags.
@@ -447,6 +456,7 @@ if (typeof module !== "undefined" && module.exports) {
 		removeTagInState,
 		countsFromState,
 		parseTagInput,
+		stripLeadingQuoteMarker,
 	};
 }
 
@@ -457,6 +467,114 @@ if (typeof module !== "undefined" && module.exports) {
 
 if (typeof GM_addStyle !== "undefined") {
 	GM_addStyle(`
+    :root {
+      --colour-hn-orange: #ff6600;
+      --colour-hn-orange-pale: rgba(255, 102, 0, 0.05);
+      --gutter: 0.5rem;
+      --border-radius: 3px;
+    }
+
+    /* Site-wide legibility tweaks, adapted from
+       https://github.com/mgladdish/website-customisations. */
+    html, body, td, .title, .comment, .default {
+      font-family: "Verdana", "Arial", sans-serif;
+    }
+    html, body { margin-top: 0; }
+    body { padding: 0; margin: 0; }
+    body, td, .title, .pagetop, .comment { font-size: 1rem; }
+
+    html[op="news"] .title,
+    .votelinks,
+    .fatitem .title + .votelinks { vertical-align: inherit; }
+
+    .comment-tree .votelinks,
+    html[op="threads"] .votelinks,
+    html[op="item"] .votelinks,
+    xhtml[op="newcomments"] .votelinks { vertical-align: top; }
+
+    span.titleline {
+      font-size: 1rem;
+      margin-top: var(--gutter);
+      margin-bottom: var(--gutter);
+      display: block;
+    }
+    html[op="item"] span.titleline { font-size: 1.2rem; }
+
+    .rank { display: none; }
+
+    html[op="news"]        #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(1),
+    html[op="newest"]      #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(1),
+    html[op="ask"]         #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(1),
+    html[op="newcomments"] #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(1),
+    html[op="shownew"]     #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(1),
+    html[op="submitted"]   #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(1),
+    html[op="favorites"]   #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(2),
+    html[op="front"]       #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(2),
+    html[op="show"]        #hnmain > tbody:nth-child(1) > tr:nth-child(3) > td:nth-child(1) > table:nth-child(2) {
+      margin-left: var(--gutter);
+    }
+
+    .sitebit.comhead { margin-left: var(--gutter); }
+    .subtext, .subline { font-size: 0.75rem; }
+
+    #hnmain {
+      width: 100%;
+      background-color: white;
+    }
+    #hnmain > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(1) {
+      padding: var(--gutter);
+    }
+    #hnmain > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(1) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(1) {
+      padding-right: var(--gutter) !important;
+    }
+
+    .comment, .toptext { max-width: 40em; }
+    .toptext, a { color: black; }
+    a:visited { color: #4c2c92; }
+    a:hover { text-decoration: underline; }
+
+    input { padding: var(--gutter); }
+    input, textarea {
+      background-color: white;
+      border: 2px solid var(--colour-hn-orange);
+      border-radius: var(--border-radius);
+    }
+    input[type="button"], input[type="submit"] { cursor: pointer; }
+
+    .downvoted {
+      background-color: rgb(245, 245, 245);
+      border-radius: var(--border-radius);
+      padding: 6px;
+    }
+    .downvoted .commtext {
+      color: black;
+      font-size: smaller;
+    }
+
+    .quote {
+      border-left: 3px solid var(--colour-hn-orange);
+      padding: 6px 6px 6px 9px;
+      font-style: italic;
+      background-color: var(--colour-hn-orange-pale);
+      border-radius: var(--border-radius);
+    }
+
+    .hidden { display: none; }
+
+    .showComment a,
+    .hideComment,
+    .hideComment:link,
+    .hideComment:visited {
+      color: var(--colour-hn-orange);
+      text-decoration: underline;
+    }
+    .hideComment { margin-left: var(--gutter); }
+
+    /* Our own injected UI (account info, custom tags, ratings, toolbar,
+       tag-management overlay). The neutralizing padding/border on our inputs
+       below is deliberate: the site-wide rules above would otherwise inflate
+       them with a heavy orange border and large padding. */
+
     .hn-post-layout {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -534,6 +652,9 @@ if (typeof GM_addStyle !== "undefined") {
       line-height: 30px;
       display: inline-block;
       vertical-align: middle;
+      padding: 0 4px;
+      border: 1px solid #ccc;
+      border-radius: 2px;
     }
     .hn-rating-container {
       margin-left: 4px;
@@ -557,7 +678,7 @@ if (typeof GM_addStyle !== "undefined") {
       top: 10px;
       right: 10px;
       background-color: white;
-      border: 1px solid #ff6600;
+      border: 1px solid var(--colour-hn-orange);
       border-radius: 4px;
       padding: 8px;
       box-shadow: 0 2px 5px rgba(0,0,0,0.2);
@@ -582,7 +703,7 @@ if (typeof GM_addStyle !== "undefined") {
       padding-left: 8px;
     }
     .hn-toolbar-btn {
-      background-color: #ff6600;
+      background-color: var(--colour-hn-orange);
       color: white;
       border: none;
       border-radius: 3px;
@@ -606,7 +727,7 @@ if (typeof GM_addStyle !== "undefined") {
       min-width: 320px;
       height: 90vh;
       background-color: white;
-      border: 1px solid #ff6600;
+      border: 1px solid var(--colour-hn-orange);
       border-radius: 4px 0 0 4px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.25);
       z-index: 9999;
@@ -634,6 +755,8 @@ if (typeof GM_addStyle !== "undefined") {
       width: 100%;
       padding: 4px 6px;
       box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 2px;
     }
     .hn-tagmgr-sort { display: flex; gap: 6px; }
     .hn-tagmgr-sort-btn {
@@ -645,9 +768,9 @@ if (typeof GM_addStyle !== "undefined") {
       cursor: pointer;
     }
     .hn-tagmgr-sort-btn.active {
-      background: #ff6600;
+      background: var(--colour-hn-orange);
       color: white;
-      border-color: #ff6600;
+      border-color: var(--colour-hn-orange);
     }
     .hn-tagmgr-list {
       flex: 1 1 auto;
@@ -661,7 +784,7 @@ if (typeof GM_addStyle !== "undefined") {
       gap: 8px;
       border-left: 2px solid transparent;
     }
-    .hn-tagmgr-row.dirty { border-left-color: #ff6600; }
+    .hn-tagmgr-row.dirty { border-left-color: var(--colour-hn-orange); }
     .hn-tagmgr-row.removed .hn-tagmgr-name { text-decoration: line-through; }
     .hn-tagmgr-row.removed { opacity: 0.6; }
     .hn-tagmgr-swatch {
@@ -684,6 +807,8 @@ if (typeof GM_addStyle !== "undefined") {
       flex: 1 1 auto;
       font-size: 1em;
       padding: 1px 5px;
+      border: 1px solid #ccc;
+      border-radius: 2px;
     }
     .hn-tagmgr-count {
       flex: 0 0 auto;
@@ -721,9 +846,9 @@ if (typeof GM_addStyle !== "undefined") {
       font-weight: bold;
     }
     .hn-tagmgr-btn.primary {
-      background: #ff6600;
+      background: var(--colour-hn-orange);
       color: white;
-      border-color: #ff6600;
+      border-color: var(--colour-hn-orange);
     }
     .hn-tagmgr-btn:hover { filter: brightness(0.95); }
   `);
@@ -1537,6 +1662,87 @@ if (typeof GM_addStyle !== "undefined") {
 		filterInput.focus();
 	}
 
+	function isItemPage() {
+		return window.location.pathname === "/item";
+	}
+
+	// HN comment styling: any .commtext that lacks the .c00 class has been
+	// downvoted (HN drops the class to express grey-on-grey). We tag the
+	// surrounding .comment so our CSS can restore black text on a faint-grey
+	// background.
+	function applyDownvotedClass() {
+		for (const el of document.querySelectorAll(".commtext")) {
+			if (!el.classList.contains("c00")) {
+				el.parentElement?.classList.add("downvoted");
+			}
+		}
+	}
+
+	// Find <i>/<p>/<span> whose first text-node child starts with ">" and
+	// re-render it as a styled <p class="quote"> block. Two shapes seen in
+	// HN markup:
+	//   1. The first text node contains both the marker and the quoted body
+	//      (e.g. <i>&gt; quoted text</i>) -> strip the marker, set the body
+	//      as text on the new <p>.
+	//   2. The first text node is just the marker, with the quoted content
+	//      sitting in the next sibling (e.g. <i>&gt; <a>link</a></i>) -> move
+	//      the sibling into the <p> so any nested elements survive.
+	function transformQuotes() {
+		const candidates = document.querySelectorAll("i, p, span");
+		for (const el of candidates) {
+			if (el.classList.contains("quote")) continue;
+			const textNode = Array.from(el.childNodes).find(
+				(n) => n.nodeType === Node.TEXT_NODE,
+			);
+			if (!textNode?.data.trimStart().startsWith(">")) continue;
+
+			const p = h("p", { class: "quote" });
+			if (textNode.data.trim() === ">") {
+				const next = textNode.nextSibling;
+				if (next) p.appendChild(next);
+			} else {
+				p.textContent = stripLeadingQuoteMarker(textNode.data);
+			}
+			textNode.replaceWith(p);
+		}
+	}
+
+	// Item pages: hide the comment-submit form behind a "show comment box"
+	// link. Returning early on missing nodes covers locked threads and
+	// logged-out views, where the form (and possibly the row) isn't there.
+	function setupCommentBoxToggle() {
+		const addComment = document.querySelector(".fatitem tr:last-of-type");
+		const commentForm = document.querySelector("form[action='comment']");
+		if (!addComment || !commentForm) return;
+
+		addComment.classList.add("hidden");
+
+		const showLink = h("a", {
+			href: "#",
+			text: "show comment box",
+		});
+		const showRow = h("tr", { class: "showComment" }, [
+			h("td", { colSpan: 2 }),
+			h("td", {}, [showLink]),
+		]);
+		const toggle = (e) => {
+			e.preventDefault();
+			showRow.classList.toggle("hidden");
+			addComment.classList.toggle("hidden");
+		};
+		showLink.addEventListener("click", toggle);
+
+		const hideLink = h("a", {
+			href: "#",
+			class: "hideComment",
+			text: "hide comment box",
+			onclick: toggle,
+		});
+
+		addComment.parentNode.insertBefore(showRow, addComment);
+		commentForm.append(hideLink);
+	}
+
 	// Sync state from other tabs. GM_addValueChangeListener fires whenever
 	// another tab writes to the same GM storage key. We invalidate the
 	// in-memory cache and re-render every user visible on this page.
@@ -1556,6 +1762,12 @@ if (typeof GM_addStyle !== "undefined") {
 		});
 	}
 
-	renderAllUsernames();
-	createToolbar();
+	applyDownvotedClass();
+	transformQuotes();
+
+	if (isItemPage()) {
+		setupCommentBoxToggle();
+		renderAllUsernames();
+		createToolbar();
+	}
 }
