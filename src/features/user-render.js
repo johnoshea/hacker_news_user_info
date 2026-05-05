@@ -235,6 +235,13 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 	// slow or hung request can't block the rest of the page.
 	function renderAllUsernames() {
 		const usernameElements = Array.from(document.querySelectorAll(".hnuser"));
+		// The OP's username appears in .fatitem above the comments and again
+		// on every comment they author within the thread. Reading it once
+		// here lets us tag every comment-row authorship below as [op] without
+		// also marking the fatitem's own hnuser (which is redundantly the OP
+		// — we already know they posted the item).
+		const itemAuthor =
+			document.querySelector(".fatitem .hnuser")?.textContent || null;
 
 		for (const usernameEl of usernameElements) {
 			const username = usernameEl.textContent;
@@ -247,6 +254,12 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 
 			const usernameClone = usernameEl.cloneNode(true);
 			usernameClone.className = `${usernameClone.className} hn-username`.trim();
+
+			const isCommentAuthor = !!usernameEl.closest("tr.comtr");
+			if (isCommentAuthor && itemAuthor && username === itemAuthor) {
+				usernameClone.classList.add("hn-op");
+				usernameClone.appendChild(document.createTextNode(" [op]"));
+			}
 
 			const infoSlot = h("span", {
 				class: "hn-info hn-info-pending",

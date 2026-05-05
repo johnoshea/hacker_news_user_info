@@ -387,4 +387,55 @@ export const STYLES = `
       border-color: var(--colour-hn-orange);
     }
     .hn-tagmgr-btn:hover { filter: brightness(0.95); }
+
+    /* Refined-HN-derived comment-tree tweaks (PR-2). HN's site-wide CSS
+       sets .commtext.cdd to grey-on-grey for dead comments; we recolour
+       it to a faint red so showdead users can spot them at a glance.
+       The indent border puts a 1px shadow on the indent gutter so reply
+       depth is visible without counting indents. <pre> and inline
+       <code> get a subtle grey background to look like code, matching
+       how most readers expect monospace text to render. */
+    .commtext.cdd,
+    .commtext.cdd * {
+      color: #d89899 !important;
+    }
+    tr.comtr td.ind {
+      box-shadow: inset -1px 0 #ccc;
+    }
+    .hn-clickable-indent {
+      cursor: pointer;
+    }
+    .hn-clickable-indent:hover {
+      box-shadow: inset -1px 0 #888;
+    }
+    div.comment span.commtext pre,
+    div.comment span.commtext *:not(pre) > code {
+      background: #e4e4e4;
+      border-radius: var(--border-radius);
+    }
+    div.comment span.commtext *:not(pre) > code {
+      padding: 0 4px;
+      display: inline-block;
+    }
+
+    /* OP highlight: the [op] suffix is appended as a text node by
+       user-render so the marker is grep-able in the DOM, and the
+       .hn-op class colours the whole username (including the suffix)
+       in HN orange. */
+    .hn-op {
+      color: var(--colour-hn-orange) !important;
+    }
+
+    /* The collapse-root link sits inline next to "parent | next" in the
+       comhead. Match HN's existing comhead link size so it doesn't
+       overpower the row. */
+    a.hn-collapse-root,
+    a.hn-collapse-root:link,
+    a.hn-collapse-root:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-collapse-root:hover {
+      text-decoration: underline;
+    }
   `;

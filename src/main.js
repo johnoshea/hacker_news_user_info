@@ -5,6 +5,8 @@
 import { createApi } from "./api.js";
 import { STATE_KEY } from "./config.js";
 import { isItemPage } from "./dom.js";
+import { setupClickIndentToggle } from "./features/click-indent-toggle.js";
+import { setupCollapseRootComment } from "./features/collapse-root-comment.js";
 import { setupCommentBoxToggle } from "./features/comment-box-toggle.js";
 import { applyDownvotedClass, transformQuotes } from "./features/legibility.js";
 import { createTagManager } from "./features/tag-manager.js";
@@ -65,6 +67,8 @@ transformQuotes();
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
+	setupClickIndentToggle();
+	setupCollapseRootComment();
 	userRender.renderAllUsernames();
 	toolbar.mount();
 }
