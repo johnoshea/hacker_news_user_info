@@ -1,6 +1,6 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { parseImport, stateToExport } = require("./_load");
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { parseImport, stateToExport } from "../src/state.js";
 
 // parseImport accepts either:
 //   (A) the normalized export format: { customTags, users }

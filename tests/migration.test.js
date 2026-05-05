@@ -1,6 +1,6 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { migrateLegacyKeys, createStore } = require("./_load");
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createStore, migrateLegacyKeys } from "../src/state.js";
 
 // Legacy layout: one backend key per user-rating, per user-tags, per tag-color.
 // The migration walks a listing backend, collects everything into the single

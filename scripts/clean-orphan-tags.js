@@ -10,11 +10,12 @@
 // Flow: Save state via the userscript toolbar -> run this script against
 // the downloaded JSON -> Restore state from the cleaned file.
 
-const fs = require("node:fs");
-const path = require("node:path");
-const { parseImport, stateToExport } = require("../script.js");
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseImport, stateToExport } from "../src/state.js";
 
-function cleanOrphans(exported) {
+export function cleanOrphans(exported) {
 	const state = parseImport(exported);
 	const usedTags = new Set();
 	for (const tags of Object.values(state.tags)) {
@@ -33,7 +34,7 @@ function cleanOrphans(exported) {
 	return { cleaned: stateToExport(state), removed };
 }
 
-function defaultOutputPath(inputPath) {
+export function defaultOutputPath(inputPath) {
 	const ext = path.extname(inputPath);
 	const dir = path.dirname(inputPath);
 	const base = path.basename(inputPath, ext);
@@ -48,16 +49,17 @@ function runCli(argv) {
 		);
 		process.exit(1);
 	}
-	const raw = JSON.parse(fs.readFileSync(inputPath, "utf8"));
+	const raw = JSON.parse(readFileSync(inputPath, "utf8"));
 	const { cleaned, removed } = cleanOrphans(raw);
 	const outPath = outputPath || defaultOutputPath(inputPath);
-	fs.writeFileSync(outPath, JSON.stringify(cleaned, null, 2));
+	writeFileSync(outPath, JSON.stringify(cleaned, null, 2));
 
 	console.log(`Removed ${removed.length} orphan tag(s):`);
 	for (const name of removed.sort()) console.log(`  - ${name}`);
 	console.log(`\nWrote cleaned export to ${outPath}`);
 }
 
-if (require.main === module) runCli(process.argv.slice(2));
-
-module.exports = { cleanOrphans, defaultOutputPath };
+const isMain =
+	process.argv[1] &&
+	fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+if (isMain) runCli(process.argv.slice(2));

@@ -1,6 +1,6 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { stripLeadingQuoteMarker } = require("./_load");
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { stripLeadingQuoteMarker } from "../src/parsing.js";
 
 // stripLeadingQuoteMarker(text) is the helper used by the inline-quote
 // renderer to extract the body of a "> quoted text" string. It removes the

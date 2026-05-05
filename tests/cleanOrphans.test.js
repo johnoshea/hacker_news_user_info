@@ -1,6 +1,6 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { cleanOrphans } = require("../scripts/clean-orphan-tags");
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { cleanOrphans } from "../scripts/clean-orphan-tags.js";
 
 // Orphan color entries (tag names in `customTags` that no user carries)
 // are dropped; in-use tags, their colors, ratings, and per-user tag

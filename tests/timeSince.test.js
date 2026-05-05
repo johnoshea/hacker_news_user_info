@@ -1,6 +1,6 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { timeSince } = require("./_load");
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { timeSince } from "../src/parsing.js";
 
 // timeSince(createdUnixSeconds, nowUnixSeconds) -> human-readable duration.
 // Keeping the existing format: "N days" / "N months" / "N years", singular for 1.
