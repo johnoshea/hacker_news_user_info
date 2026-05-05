@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.7
+// @version      0.8
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -52,6 +52,21 @@ const READ_COMMENTS_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 // page render on items with hundreds of comments. The fatitem-level
 // "[toggle all]" link is always on.
 const TOGGLE_ALL_REPLIES_ENABLED = false;
+
+// Hover-panel TTL/timeout/dwell. Item content (title, score, comment
+// count, etc.) drifts about as slowly as user karma, so a 6h cache is
+// enough for the hover preview to feel current without re-fetching the
+// same item every time the cursor passes over a link.
+const ITEM_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+// Per-request ceiling for the hover fetcher. Same shape as the user
+// fetch — without it a hung request would leave the popup stuck on
+// "loading…" until the tab is closed.
+const ITEM_FETCH_TIMEOUT_MS = 8000;
+// How long the cursor must rest on a link before we trigger a fetch.
+// Keeps the hover from firing during cursor-fly-over events on long
+// pages; short enough to feel responsive when the user actually wants
+// the preview.
+const HOVER_DWELL_MS = 250;
 
 
 // ===== src/parsing.js =====
@@ -166,6 +181,33 @@ function pruneExpiredReadComments(map, nowMs, ttlMs) {
 	return out;
 }
 
+// Truncate a string to at most maxLen characters, appending an ellipsis
+// (…) when the original was longer. Used by the hover popups to keep
+// long item-text or user-about previews from overflowing the popup.
+//
+// Keeps it simple: counts code units, not graphemes. HN content is
+// overwhelmingly ASCII/BMP so this is fine in practice.
+function truncateText(text, maxLen) {
+	if (typeof text !== "string") return "";
+	if (typeof maxLen !== "number" || maxLen < 0) return text;
+	if (text.length <= maxLen) return text;
+	return `${text.slice(0, maxLen)}…`;
+}
+
+// Pull the hostname out of an absolute URL, or null if the input isn't
+// parseable. Used by the item-info hover to render a "(github.com)"
+// badge next to a story's title — same convention HN uses on listing
+// pages.
+function extractDomain(url) {
+	if (typeof url !== "string" || url === "") return null;
+	try {
+		const host = new URL(url).hostname;
+		return host.startsWith("www.") ? host.slice(4) : host;
+	} catch {
+		return null;
+	}
+}
+
 // Parse a raw comma-separated tag string into a canonical list: each name
 // trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
 // the inline tag input so duplicates never reach setUserTags.
@@ -195,6 +237,7 @@ function emptyState() {
 		colors: {}, // tagName  -> { bgColor, textColor }
 		cache: {}, // username -> { created, karma, fetchedAt }
 		readComments: {}, // itemId -> { ids: [...], fetchedAt }
+		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, fetchedAt }
 	};
 }
 
@@ -272,16 +315,37 @@ function createStore(backend) {
 		// User-data cache. The `now` and `ttlMs` arguments are injected so tests
 		// can control time without mocking the clock. The browser call site
 		// passes Date.now() and a hardcoded TTL (USER_CACHE_TTL_MS in config).
+		// `data` is treated as opaque so future call sites (e.g. the hover
+		// panel adding `about`) don't need to extend this method's signature.
 		getCachedUser(username, nowMs, ttlMs) {
 			const entry = load().cache[username];
 			if (!entry) return null;
 			if (nowMs - entry.fetchedAt > ttlMs) return null;
-			return { created: entry.created, karma: entry.karma };
+			const { fetchedAt: _f, ...rest } = entry;
+			return rest;
 		},
-		setCachedUser(username, { created, karma }, nowMs) {
-			load().cache[username] = { created, karma, fetchedAt: nowMs };
+		setCachedUser(username, data, nowMs) {
+			load().cache[username] = { ...data, fetchedAt: nowMs };
 			save();
 		},
+		// Item-info cache for the hover-panel feature. Stores a digest
+		// (title/url/by/score/descendants/time/text/type) of items the
+		// user has hovered, so subsequent hovers resolve from local
+		// state without re-hitting the Firebase API.
+		getCachedItem(itemId, nowMs, ttlMs) {
+			const entry = load().itemCache?.[itemId];
+			if (!entry) return null;
+			if (nowMs - entry.fetchedAt > ttlMs) return null;
+			const { fetchedAt: _f, ...digest } = entry;
+			return digest;
+		},
+		setCachedItem(itemId, digest, nowMs) {
+			const s = load();
+			if (!s.itemCache) s.itemCache = {};
+			s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
+			save();
+		},
+
 		// Read-comments cache for highlight-unread. Returns the stored
 		// entry { ids, fetchedAt } if it exists, else null. The browser
 		// caller decides what to do with a missing entry (highlight
@@ -1094,6 +1158,42 @@ const STYLES = `
     a.hn-toggle-replies:hover {
       text-decoration: underline;
     }
+
+    /* PR-4: shared hover-popup primitive used by user-info-hover and
+       item-info-hover. Fixed-position-via-absolute (anchored relative
+       to scrollY/scrollX in the JS) so it floats above page content
+       without joining the document flow. The .hidden rule is shared
+       with the comment-box-toggle. */
+    .hn-hover-popup {
+      position: absolute;
+      max-width: 360px;
+      background: white;
+      border: 1px solid var(--colour-hn-orange);
+      border-radius: var(--border-radius);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      padding: 8px 10px;
+      font-size: 0.85em;
+      z-index: 10000;
+      pointer-events: none;
+    }
+    .hn-hover-popup-title {
+      font-size: 1em;
+      margin-bottom: 4px;
+    }
+    .hn-hover-popup-domain {
+      color: #888;
+      font-weight: normal;
+    }
+    .hn-hover-popup-meta {
+      color: #555;
+      margin-bottom: 4px;
+    }
+    .hn-hover-popup-body {
+      color: #333;
+      margin-top: 4px;
+      max-height: 8em;
+      overflow: hidden;
+    }
   `;
 
 
@@ -1104,18 +1204,22 @@ const STYLES = `
 // (so the build artifact, which inlines this, doesn't crash if loaded
 // outside a userscript runtime).
 
-// Factory over a store. Returns { fetchUser } where fetchUser(username)
-// resolves to {created, karma} or null. Guards:
-//   - Persistent cache via store.getCachedUser / setCachedUser (TTL in config).
-//   - In-memory inflight Map dedupes concurrent fetches for the same user.
-//   - Per-request timeout so a hung request can't block page render forever.
+// Factory over a store. Returns { fetchUser, fetchItem } where each
+// resolves to a digest object or null. Both are protected by:
+//   - A persistent cache (store.getCachedUser/getCachedItem) with a TTL
+//     declared in config.
+//   - An in-memory inflight Map that dedupes concurrent fetches for
+//     the same key.
+//   - A per-request timeout so a hung request can't leave a popup
+//     stuck on "loading…" forever.
 function createApi({ store }) {
-	const inflight = new Map();
+	const userInflight = new Map();
+	const itemInflight = new Map();
 
 	function fetchUser(username) {
 		const cached = store.getCachedUser(username, Date.now(), USER_CACHE_TTL_MS);
 		if (cached) return Promise.resolve(cached);
-		if (inflight.has(username)) return inflight.get(username);
+		if (userInflight.has(username)) return userInflight.get(username);
 
 		const promise = new Promise((resolve) => {
 			GM_xmlhttpRequest({
@@ -1132,10 +1236,18 @@ function createApi({ store }) {
 						if (data && typeof data.created === "number") {
 							store.setCachedUser(
 								username,
-								{ created: data.created, karma: data.karma },
+								{
+									created: data.created,
+									karma: data.karma,
+									about: data.about || "",
+								},
 								Date.now(),
 							);
-							resolve({ created: data.created, karma: data.karma });
+							resolve({
+								created: data.created,
+								karma: data.karma,
+								about: data.about || "",
+							});
 						} else {
 							resolve(null);
 						}
@@ -1147,13 +1259,61 @@ function createApi({ store }) {
 				ontimeout: () => resolve(null),
 			});
 		}).finally(() => {
-			inflight.delete(username);
+			userInflight.delete(username);
 		});
-		inflight.set(username, promise);
+		userInflight.set(username, promise);
 		return promise;
 	}
 
-	return { fetchUser };
+	function fetchItem(itemId) {
+		const cached = store.getCachedItem(itemId, Date.now(), ITEM_CACHE_TTL_MS);
+		if (cached) return Promise.resolve(cached);
+		if (itemInflight.has(itemId)) return itemInflight.get(itemId);
+
+		const promise = new Promise((resolve) => {
+			GM_xmlhttpRequest({
+				method: "GET",
+				url: `https://hacker-news.firebaseio.com/v0/item/${itemId}.json`,
+				timeout: ITEM_FETCH_TIMEOUT_MS,
+				onload: (response) => {
+					if (response.status !== 200 || !response.responseText) {
+						resolve(null);
+						return;
+					}
+					try {
+						const data = JSON.parse(response.responseText);
+						if (!data || typeof data.id !== "number") {
+							resolve(null);
+							return;
+						}
+						const digest = {
+							title: data.title || "",
+							url: data.url || "",
+							by: data.by || "",
+							score: typeof data.score === "number" ? data.score : 0,
+							descendants:
+								typeof data.descendants === "number" ? data.descendants : 0,
+							time: typeof data.time === "number" ? data.time : 0,
+							text: data.text || "",
+							type: data.type || "story",
+						};
+						store.setCachedItem(itemId, digest, Date.now());
+						resolve(digest);
+					} catch (_err) {
+						resolve(null);
+					}
+				},
+				onerror: () => resolve(null),
+				ontimeout: () => resolve(null),
+			});
+		}).finally(() => {
+			itemInflight.delete(itemId);
+		});
+		itemInflight.set(itemId, promise);
+		return promise;
+	}
+
+	return { fetchUser, fetchItem };
 }
 
 
@@ -1509,6 +1669,240 @@ function setupHighlightUnreadComments({ store }) {
 	// Always update the stored snapshot to match what's currently on
 	// the page — next visit's "new" set is derived from this.
 	store.setReadComments(itemId, currentIds, now);
+}
+
+
+// ===== src/features/hover-popup.js =====
+
+// Shared hover-popup primitive used by user-info-hover and item-info-hover.
+// Builds a single fixed-position div appended to <body>, plus an
+// attachDwell helper that wires the standard "cursor rests for N ms ->
+// fetch -> render -> show" pattern. One popup per page; whichever
+// hover wins last replaces the content.
+function createHoverPopup() {
+	const popup = h("div", { class: "hn-hover-popup hidden" });
+	document.body.appendChild(popup);
+
+	let currentToken = 0; // monotonic; bumped on every show/hide
+	let visibleNear = null;
+
+	function setContent(nodes) {
+		popup.replaceChildren(...nodes);
+	}
+
+	function position(near) {
+		const rect = near.getBoundingClientRect();
+		// Anchor below the link, scrolled-position-aware. Clamp to the
+		// viewport so the popup doesn't escape off the right or bottom
+		// edge on long usernames near the screen edge.
+		const top = rect.bottom + window.scrollY + 6;
+		const proposedLeft = rect.left + window.scrollX;
+		const maxLeft = window.scrollX + document.documentElement.clientWidth - 360;
+		const left = Math.max(window.scrollX + 4, Math.min(proposedLeft, maxLeft));
+		popup.style.top = `${top}px`;
+		popup.style.left = `${left}px`;
+	}
+
+	function show(near, contentNodes) {
+		setContent(contentNodes);
+		position(near);
+		popup.classList.remove("hidden");
+		visibleNear = near;
+	}
+
+	function hide() {
+		currentToken += 1;
+		popup.classList.add("hidden");
+		visibleNear = null;
+		popup.replaceChildren();
+	}
+
+	// Wire mouseenter/mouseleave on `target` so that, after HOVER_DWELL_MS
+	// of continuous hover, `loader()` is invoked. If it resolves and the
+	// cursor is still on the target, `render(data)` is called and its
+	// returned nodes are shown in the popup. Mouse leaving the target at
+	// any time aborts the in-flight chain via a token bump.
+	function attachDwell(target, loader, render) {
+		let dwellTimer = null;
+		let myToken = -1;
+
+		target.addEventListener("mouseenter", () => {
+			if (dwellTimer) clearTimeout(dwellTimer);
+			currentToken += 1;
+			myToken = currentToken;
+			dwellTimer = setTimeout(() => {
+				if (myToken !== currentToken) return;
+				Promise.resolve(loader()).then((data) => {
+					if (myToken !== currentToken) return;
+					if (!data) {
+						hide();
+						return;
+					}
+					show(target, render(data));
+				});
+			}, HOVER_DWELL_MS);
+		});
+
+		target.addEventListener("mouseleave", () => {
+			if (dwellTimer) {
+				clearTimeout(dwellTimer);
+				dwellTimer = null;
+			}
+			// Only hide if this target's hover is still the visible one;
+			// avoids hiding the popup the user just moved into a second
+			// candidate over.
+			if (visibleNear === target) hide();
+			currentToken += 1;
+			myToken = -1;
+		});
+	}
+
+	return { show, hide, attachDwell };
+}
+
+
+// ===== src/features/user-info-hover.js =====
+
+// Hover any .hnuser link to see a popup with the user's account age,
+// karma, and (if any) about-text snippet. Shares the popup primitive
+// with item-info-hover, and the user-data cache with renderAllUsernames
+// — repeat hovers cost zero requests.
+//
+// Skips:
+//   - The /user page itself (you're already looking at the profile)
+//   - The .hnuser inside .hn-main-row (our own injected username clone
+//     in renderAllUsernames; hovering that would create a duplicate
+//     "(N years old, KKK karma)" experience next to the inline blurb)
+
+
+
+const ABOUT_PREVIEW_MAX = 280;
+
+function isOnUserPage() {
+	return window.location.pathname === "/user";
+}
+
+// HN serves `about` as HTML (links, paragraphs, italic). For the
+// preview popup, we want a plain-text rendering — strips tags via the
+// browser's HTML parser and trims to a fixed length so a long bio
+// doesn't make the popup the size of a small monitor.
+function aboutToText(html) {
+	if (!html) return "";
+	const doc = new DOMParser().parseFromString(html, "text/html");
+	const text = (doc.body.textContent || "").replace(/\s+/g, " ").trim();
+	return truncateText(text, ABOUT_PREVIEW_MAX);
+}
+
+function renderUserPopup(username, data) {
+	const nowSeconds = Math.floor(Date.now() / 1000);
+	const lines = [
+		h("div", { class: "hn-hover-popup-title" }, [
+			h("strong", { text: username }),
+		]),
+		h("div", {
+			class: "hn-hover-popup-meta",
+			text: `${timeSince(data.created, nowSeconds)} old · ${data.karma} karma`,
+		}),
+	];
+	const about = aboutToText(data.about);
+	if (about) {
+		lines.push(h("div", { class: "hn-hover-popup-body", text: about }));
+	}
+	return lines;
+}
+function setupUserInfoHover({ fetchUser, popup }) {
+	if (isOnUserPage()) return;
+	for (const link of document.querySelectorAll("a.hnuser")) {
+		// Skip our own injected clone inside .hn-main-row — it lives next
+		// to the inline (age, karma) blurb so the popup would be redundant.
+		if (link.closest(".hn-main-row")) continue;
+		const username = link.textContent;
+		if (!username) continue;
+		popup.attachDwell(
+			link,
+			() => fetchUser(username),
+			(data) => renderUserPopup(username, data),
+		);
+	}
+}
+
+
+// ===== src/features/item-info-hover.js =====
+
+// Hover any link to /item?id=N inside a comment to see a preview of
+// that item: title, domain, author, score, comment count, time, and
+// (for Ask/Show items) a snippet of the body text. Useful when a
+// commenter cites another submission and you want context without
+// leaving the page.
+//
+// Scoped to `.commtext a[href*='/item?id=']` so we only enrich
+// commenter-cited links, not navigation chrome (like the "parent" /
+// "next" links that point to other items).
+
+
+
+const TEXT_PREVIEW_MAX = 280;
+
+function getItemId(link) {
+	try {
+		const url = new URL(link.href);
+		return url.searchParams.get("id") || null;
+	} catch {
+		return null;
+	}
+}
+
+function textToPreview(html) {
+	if (!html) return "";
+	const doc = new DOMParser().parseFromString(html, "text/html");
+	const text = (doc.body.textContent || "").replace(/\s+/g, " ").trim();
+	return truncateText(text, TEXT_PREVIEW_MAX);
+}
+
+function renderItemPopup(digest) {
+	const nowSeconds = Math.floor(Date.now() / 1000);
+	const titleNodes = [h("strong", { text: digest.title || "(untitled)" })];
+	const domain = extractDomain(digest.url);
+	if (domain) {
+		titleNodes.push(
+			h("span", { class: "hn-hover-popup-domain", text: ` (${domain})` }),
+		);
+	}
+
+	const lines = [h("div", { class: "hn-hover-popup-title" }, titleNodes)];
+
+	const metaParts = [];
+	if (digest.score) metaParts.push(`${digest.score} points`);
+	if (digest.by) metaParts.push(`by ${digest.by}`);
+	if (digest.time) metaParts.push(`${timeSince(digest.time, nowSeconds)} ago`);
+	if (typeof digest.descendants === "number") {
+		metaParts.push(
+			`${digest.descendants} comment${digest.descendants === 1 ? "" : "s"}`,
+		);
+	}
+	if (metaParts.length > 0) {
+		lines.push(
+			h("div", { class: "hn-hover-popup-meta", text: metaParts.join(" · ") }),
+		);
+	}
+
+	const body = textToPreview(digest.text);
+	if (body) {
+		lines.push(h("div", { class: "hn-hover-popup-body", text: body }));
+	}
+	return lines;
+}
+function setupItemInfoHover({ fetchItem, popup }) {
+	const links = document.querySelectorAll(".commtext a[href*='/item?id=']");
+	for (const link of links) {
+		const id = getItemId(link);
+		if (!id) continue;
+		popup.attachDwell(
+			link,
+			() => fetchItem(id),
+			(digest) => renderItemPopup(digest),
+		);
+	}
 }
 
 
@@ -2317,6 +2711,9 @@ function createToolbar({ store, backend }) {
 
 
 
+
+
+
 GM_addStyle(STYLES);
 
 // Adapter from GM_* to the {get, set, list} interface the store and
@@ -2329,7 +2726,8 @@ const backend = {
 
 migrateLegacyKeys(backend);
 const store = createStore(backend);
-const { fetchUser } = createApi({ store });
+const { fetchUser, fetchItem } = createApi({ store });
+const hoverPopup = createHoverPopup();
 
 // Tag manager and user-render reference each other; both bindings exist by
 // the time either's stored callback runs (on a click), so the closures
@@ -2366,6 +2764,9 @@ if (typeof GM_addValueChangeListener === "function") {
 
 applyDownvotedClass();
 transformQuotes();
+// User-info hover wires every .hnuser on every page (except /user
+// itself, which the feature checks internally).
+setupUserInfoHover({ fetchUser, popup: hoverPopup });
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
@@ -2375,6 +2776,7 @@ if (isItemPage()) {
 	setupToggleAllComments();
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
+	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	toolbar.mount();
 }
 

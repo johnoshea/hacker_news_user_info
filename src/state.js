@@ -19,6 +19,7 @@ export function emptyState() {
 		colors: {}, // tagName  -> { bgColor, textColor }
 		cache: {}, // username -> { created, karma, fetchedAt }
 		readComments: {}, // itemId -> { ids: [...], fetchedAt }
+		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, fetchedAt }
 	};
 }
 
@@ -96,16 +97,37 @@ export function createStore(backend) {
 		// User-data cache. The `now` and `ttlMs` arguments are injected so tests
 		// can control time without mocking the clock. The browser call site
 		// passes Date.now() and a hardcoded TTL (USER_CACHE_TTL_MS in config).
+		// `data` is treated as opaque so future call sites (e.g. the hover
+		// panel adding `about`) don't need to extend this method's signature.
 		getCachedUser(username, nowMs, ttlMs) {
 			const entry = load().cache[username];
 			if (!entry) return null;
 			if (nowMs - entry.fetchedAt > ttlMs) return null;
-			return { created: entry.created, karma: entry.karma };
+			const { fetchedAt: _f, ...rest } = entry;
+			return rest;
 		},
-		setCachedUser(username, { created, karma }, nowMs) {
-			load().cache[username] = { created, karma, fetchedAt: nowMs };
+		setCachedUser(username, data, nowMs) {
+			load().cache[username] = { ...data, fetchedAt: nowMs };
 			save();
 		},
+		// Item-info cache for the hover-panel feature. Stores a digest
+		// (title/url/by/score/descendants/time/text/type) of items the
+		// user has hovered, so subsequent hovers resolve from local
+		// state without re-hitting the Firebase API.
+		getCachedItem(itemId, nowMs, ttlMs) {
+			const entry = load().itemCache?.[itemId];
+			if (!entry) return null;
+			if (nowMs - entry.fetchedAt > ttlMs) return null;
+			const { fetchedAt: _f, ...digest } = entry;
+			return digest;
+		},
+		setCachedItem(itemId, digest, nowMs) {
+			const s = load();
+			if (!s.itemCache) s.itemCache = {};
+			s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
+			save();
+		},
+
 		// Read-comments cache for highlight-unread. Returns the stored
 		// entry { ids, fetchedAt } if it exists, else null. The browser
 		// caller decides what to do with a missing entry (highlight

@@ -10,10 +10,13 @@ import { setupClickIndentToggle } from "./features/click-indent-toggle.js";
 import { setupCollapseRootComment } from "./features/collapse-root-comment.js";
 import { setupCommentBoxToggle } from "./features/comment-box-toggle.js";
 import { setupHighlightUnreadComments } from "./features/highlight-unread-comments.js";
+import { createHoverPopup } from "./features/hover-popup.js";
+import { setupItemInfoHover } from "./features/item-info-hover.js";
 import { applyDownvotedClass, transformQuotes } from "./features/legibility.js";
 import { createTagManager } from "./features/tag-manager.js";
 import { setupToggleAllComments } from "./features/toggle-all-comments.js";
 import { createToolbar } from "./features/toolbar.js";
+import { setupUserInfoHover } from "./features/user-info-hover.js";
 import { createUserRender } from "./features/user-render.js";
 import { createStore, migrateLegacyKeys } from "./state.js";
 import { STYLES } from "./styles.js";
@@ -30,7 +33,8 @@ const backend = {
 
 migrateLegacyKeys(backend);
 const store = createStore(backend);
-const { fetchUser } = createApi({ store });
+const { fetchUser, fetchItem } = createApi({ store });
+const hoverPopup = createHoverPopup();
 
 // Tag manager and user-render reference each other; both bindings exist by
 // the time either's stored callback runs (on a click), so the closures
@@ -67,6 +71,9 @@ if (typeof GM_addValueChangeListener === "function") {
 
 applyDownvotedClass();
 transformQuotes();
+// User-info hover wires every .hnuser on every page (except /user
+// itself, which the feature checks internally).
+setupUserInfoHover({ fetchUser, popup: hoverPopup });
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
@@ -76,5 +83,6 @@ if (isItemPage()) {
 	setupToggleAllComments();
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
+	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	toolbar.mount();
 }

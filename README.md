@@ -27,6 +27,8 @@ Each commenter's username is augmented with:
 
 The comment tree itself gets a few tweaks for skim-ability:
 
+- **Hover any username** to see a popup with their account age, karma, and (if any) about-text snippet — works on every HN page that shows usernames, and reuses the same 6h cache as the inline (age, karma) blurb on item pages so repeat hovers are free.
+- **Hover any link to another HN item** inside a comment to see a popup with the item's title, domain, author, score, comment count, and (for Ask/Show items) a snippet of the body text. Useful when a commenter cites another submission and you want context without leaving the page.
 - **Click anywhere on the indent gutter to collapse a comment** — no more hunting for the small `[-]` link.
 - **`[collapse root]`** link in every nested comment's header that collapses the whole top-level thread it belongs to and scrolls back to the (now-collapsed) root, so you can dismiss an entire branch and pick up where you left off without losing your place.
 - **`toggle all`** link in the item's subtext that collapses or expands every top-level comment in one click — handy when you want to scan headers on a long thread.

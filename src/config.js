@@ -31,3 +31,18 @@ export const READ_COMMENTS_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 // page render on items with hundreds of comments. The fatitem-level
 // "[toggle all]" link is always on.
 export const TOGGLE_ALL_REPLIES_ENABLED = false;
+
+// Hover-panel TTL/timeout/dwell. Item content (title, score, comment
+// count, etc.) drifts about as slowly as user karma, so a 6h cache is
+// enough for the hover preview to feel current without re-fetching the
+// same item every time the cursor passes over a link.
+export const ITEM_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+// Per-request ceiling for the hover fetcher. Same shape as the user
+// fetch — without it a hung request would leave the popup stuck on
+// "loading…" until the tab is closed.
+export const ITEM_FETCH_TIMEOUT_MS = 8000;
+// How long the cursor must rest on a link before we trigger a fetch.
+// Keeps the hover from firing during cursor-fly-over events on long
+// pages; short enough to feel responsive when the user actually wants
+// the preview.
+export const HOVER_DWELL_MS = 250;

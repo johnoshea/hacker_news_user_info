@@ -2,20 +2,29 @@
 // global at call time so this module never references it at import time
 // (so the build artifact, which inlines this, doesn't crash if loaded
 // outside a userscript runtime).
-import { USER_CACHE_TTL_MS, USER_FETCH_TIMEOUT_MS } from "./config.js";
+import {
+	ITEM_CACHE_TTL_MS,
+	ITEM_FETCH_TIMEOUT_MS,
+	USER_CACHE_TTL_MS,
+	USER_FETCH_TIMEOUT_MS,
+} from "./config.js";
 
-// Factory over a store. Returns { fetchUser } where fetchUser(username)
-// resolves to {created, karma} or null. Guards:
-//   - Persistent cache via store.getCachedUser / setCachedUser (TTL in config).
-//   - In-memory inflight Map dedupes concurrent fetches for the same user.
-//   - Per-request timeout so a hung request can't block page render forever.
+// Factory over a store. Returns { fetchUser, fetchItem } where each
+// resolves to a digest object or null. Both are protected by:
+//   - A persistent cache (store.getCachedUser/getCachedItem) with a TTL
+//     declared in config.
+//   - An in-memory inflight Map that dedupes concurrent fetches for
+//     the same key.
+//   - A per-request timeout so a hung request can't leave a popup
+//     stuck on "loading…" forever.
 export function createApi({ store }) {
-	const inflight = new Map();
+	const userInflight = new Map();
+	const itemInflight = new Map();
 
 	function fetchUser(username) {
 		const cached = store.getCachedUser(username, Date.now(), USER_CACHE_TTL_MS);
 		if (cached) return Promise.resolve(cached);
-		if (inflight.has(username)) return inflight.get(username);
+		if (userInflight.has(username)) return userInflight.get(username);
 
 		const promise = new Promise((resolve) => {
 			GM_xmlhttpRequest({
@@ -32,10 +41,18 @@ export function createApi({ store }) {
 						if (data && typeof data.created === "number") {
 							store.setCachedUser(
 								username,
-								{ created: data.created, karma: data.karma },
+								{
+									created: data.created,
+									karma: data.karma,
+									about: data.about || "",
+								},
 								Date.now(),
 							);
-							resolve({ created: data.created, karma: data.karma });
+							resolve({
+								created: data.created,
+								karma: data.karma,
+								about: data.about || "",
+							});
 						} else {
 							resolve(null);
 						}
@@ -47,11 +64,59 @@ export function createApi({ store }) {
 				ontimeout: () => resolve(null),
 			});
 		}).finally(() => {
-			inflight.delete(username);
+			userInflight.delete(username);
 		});
-		inflight.set(username, promise);
+		userInflight.set(username, promise);
 		return promise;
 	}
 
-	return { fetchUser };
+	function fetchItem(itemId) {
+		const cached = store.getCachedItem(itemId, Date.now(), ITEM_CACHE_TTL_MS);
+		if (cached) return Promise.resolve(cached);
+		if (itemInflight.has(itemId)) return itemInflight.get(itemId);
+
+		const promise = new Promise((resolve) => {
+			GM_xmlhttpRequest({
+				method: "GET",
+				url: `https://hacker-news.firebaseio.com/v0/item/${itemId}.json`,
+				timeout: ITEM_FETCH_TIMEOUT_MS,
+				onload: (response) => {
+					if (response.status !== 200 || !response.responseText) {
+						resolve(null);
+						return;
+					}
+					try {
+						const data = JSON.parse(response.responseText);
+						if (!data || typeof data.id !== "number") {
+							resolve(null);
+							return;
+						}
+						const digest = {
+							title: data.title || "",
+							url: data.url || "",
+							by: data.by || "",
+							score: typeof data.score === "number" ? data.score : 0,
+							descendants:
+								typeof data.descendants === "number" ? data.descendants : 0,
+							time: typeof data.time === "number" ? data.time : 0,
+							text: data.text || "",
+							type: data.type || "story",
+						};
+						store.setCachedItem(itemId, digest, Date.now());
+						resolve(digest);
+					} catch (_err) {
+						resolve(null);
+					}
+				},
+				onerror: () => resolve(null),
+				ontimeout: () => resolve(null),
+			});
+		}).finally(() => {
+			itemInflight.delete(itemId);
+		});
+		itemInflight.set(itemId, promise);
+		return promise;
+	}
+
+	return { fetchUser, fetchItem };
 }

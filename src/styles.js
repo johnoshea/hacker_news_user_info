@@ -463,4 +463,40 @@ export const STYLES = `
     a.hn-toggle-replies:hover {
       text-decoration: underline;
     }
+
+    /* PR-4: shared hover-popup primitive used by user-info-hover and
+       item-info-hover. Fixed-position-via-absolute (anchored relative
+       to scrollY/scrollX in the JS) so it floats above page content
+       without joining the document flow. The .hidden rule is shared
+       with the comment-box-toggle. */
+    .hn-hover-popup {
+      position: absolute;
+      max-width: 360px;
+      background: white;
+      border: 1px solid var(--colour-hn-orange);
+      border-radius: var(--border-radius);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      padding: 8px 10px;
+      font-size: 0.85em;
+      z-index: 10000;
+      pointer-events: none;
+    }
+    .hn-hover-popup-title {
+      font-size: 1em;
+      margin-bottom: 4px;
+    }
+    .hn-hover-popup-domain {
+      color: #888;
+      font-weight: normal;
+    }
+    .hn-hover-popup-meta {
+      color: #555;
+      margin-bottom: 4px;
+    }
+    .hn-hover-popup-body {
+      color: #333;
+      margin-top: 4px;
+      max-height: 8em;
+      overflow: hidden;
+    }
   `;
