@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 
 1. **Site-wide legibility layer** (every HN page, `news.ycombinator.com/*`): font reset, sizing, gutters, full-width main, downvoted-comment restyling (black-on-faint-grey), quoted-text rendering (`>`-prefixed text wrapped in `<p class="quote">` with HN-orange accents), and `.rank` hidden. CSS comes from a `:root` block with `--colour-hn-orange`, `--colour-hn-orange-pale`, `--gutter`, and `--border-radius` tokens. Adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
-2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, draggable toolbar for export/import, and a "show comment box" toggle that collapses the page-bottom comment-submit form.
+2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, and a "show comment box" toggle that collapses the page-bottom comment-submit form.
 
-`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`) on every HN page and the enrichment passes (`setupCommentBoxToggle`, `userRender.renderAllUsernames`, `toolbar.mount`) only on item pages.
+`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`) on every HN page and the enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `userRender.renderAllUsernames`, `toolbar.mount`) only on item pages.
 
 ## Commands
 
@@ -27,7 +27,8 @@ After any edit under `src/`, run `just build` (or `just check`) so `script.js` s
 ```
 src/
   config.js                  Storage key, schema version, TTL/timeout constants
-  parsing.js                 Pure helpers: timeSince, stripLeadingQuoteMarker, parseTagInput
+  parsing.js                 Pure helpers: timeSince, stripLeadingQuoteMarker, parseTagInput,
+                             findCommentRootIndices
   state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
   dom.js                     h() factory, findCommentParent, isItemPage
@@ -36,7 +37,11 @@ src/
   features/
     legibility.js            applyDownvotedClass, transformQuotes (run on every HN page)
     comment-box-toggle.js    setupCommentBoxToggle (item pages only)
+    click-indent-toggle.js   setupClickIndentToggle: makes td.ind a click target for a.togg
+    collapse-root-comment.js setupCollapseRootComment: appends "[collapse root]" link
+                             to every non-root comment's comhead
     user-render.js           createUserRender factory: renderAllUsernames + per-user rerender
+                             (also adds the .hn-op class + " [op]" marker on OP's comments)
     tag-manager.js           createTagManager factory: overlay state machine
     toolbar.js               createToolbar factory: floating Save/Restore-state buttons
   main.js                    Bootstrap: builds backend, store, api, features; wires
@@ -88,11 +93,23 @@ On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`
 
 `setupCommentBoxToggle()` (in `src/features/comment-box-toggle.js`) runs only on item pages. It hides `.fatitem tr:last-of-type` (the comment-submit row), prepends a `<tr class="showComment">` carrying a "show comment box" link, and appends a "hide comment box" link inside the form. Both links toggle the same two classes. Returns early on missing nodes (locked threads, logged-out views).
 
+### Comment-tree tweaks (item pages only)
+
+A handful of small DOM passes that make the comment tree easier to read and faster to skim. All three live under `src/features/` and are invoked once after the page loads.
+
+`setupClickIndentToggle()` (in `src/features/click-indent-toggle.js`) walks every `tr.comtr`, adds the `.hn-clickable-indent` class to its `td.ind`, and attaches a click handler that fires the row's native `a.togg`. The CSS adds `cursor: pointer` and a hover box-shadow so the gutter looks clickable.
+
+`setupCollapseRootComment()` (in `src/features/collapse-root-comment.js`) reads each comment's indent level from the width of `td.ind img` (HN renders one indent unit as 40px), passes the level array to the pure helper `findCommentRootIndices` in `src/parsing.js`, and uses the result to inject a `[collapse root]` link into every non-root comment's `span.comhead`. Clicking the link fires the root comment's `a.togg` and scrolls the page back to the (now-collapsed) root so the reader doesn't lose their place. Roots themselves don't get the link.
+
+The remaining tweaks (dead-comment recolour, indent-gutter separator, `<pre>` and inline `<code>` background) are CSS-only — see the rules at the bottom of `src/styles.js`. They piggyback on HN's own classes (`.commtext.cdd` for dead, `tr.comtr td.ind` for the gutter) so no JS pass is needed.
+
 ### User rendering (`src/features/user-render.js`)
 
 Exposed as a factory: `createUserRender({ store, fetchUser, openTagManager })` → `{ renderAllUsernames, rerenderUserTags, rerenderUserRatings }`. Wired in `src/main.js`.
 
 `renderAllUsernames()` iterates `.hnuser` elements and for each one builds a skeleton row synchronously (rating controls, tag input, tag list) from store state. The `(age, karma)` blurb is a `(loading…)` placeholder that gets replaced asynchronously by `fetchUser(username).then(...)`. This means a slow or hung request cannot block the rest of the page from rendering.
+
+OP highlight is folded into the same loop: `renderAllUsernames()` reads `.fatitem .hnuser` once at the top to capture the item author, then for every comment-row `.hnuser` whose text matches it adds the `.hn-op` class plus a " [op]" text node child. The `.fatitem` `.hnuser` itself is excluded (its OP-ness is already obvious from being in the item header). The CSS gives `.hn-op` an HN-orange `color` so the suffix and username read together as a single accent.
 
 `fetchUser` (in `src/api.js`, returned by `createApi({ store })`) is protected by:
 - A persistent cache (`store.getCachedUser`) with a 6h TTL — repeat users incur zero network cost.

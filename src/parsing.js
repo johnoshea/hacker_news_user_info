@@ -23,6 +23,26 @@ export function stripLeadingQuoteMarker(text) {
 	return text.replace(/^\s*>\s*/, "").trim();
 }
 
+// For an item page's comment list (top-down DOM order), return for each
+// comment the index of its current root (a top-level comment with indent
+// level 0), or -1 if the comment is itself a root.
+//
+// Used by collapse-root-comment to inject a "[collapse root]" link on
+// every non-root comment that points at the right root toggle.
+export function findCommentRootIndices(indentLevels) {
+	const out = new Array(indentLevels.length);
+	let currentRoot = -1;
+	for (let i = 0; i < indentLevels.length; i++) {
+		if (indentLevels[i] === 0) {
+			currentRoot = i;
+			out[i] = -1; // a root has no parent root to collapse to
+		} else {
+			out[i] = currentRoot;
+		}
+	}
+	return out;
+}
+
 // Parse a raw comma-separated tag string into a canonical list: each name
 // trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
 // the inline tag input so duplicates never reach setUserTags.

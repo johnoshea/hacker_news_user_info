@@ -23,6 +23,15 @@ Each commenter's username is augmented with:
 - **Up/down rating buttons** (▲ / ▼) that track your own opinion of the author. The rating is stored locally and persists across visits.
 - **A tag input** where you can type comma-separated tags (e.g. `expert, javascript, helpful`). Each tag gets a random pastel color the first time you use it, and reuses the same color for every user you apply it to.
 - **A tag list** in the right column showing all tags you've applied to the commenter, each with inline edit and remove icons.
+- **Original-poster highlight**: every comment by the item's submitter gets a `[op]` suffix and HN-orange username so you can spot the OP's replies at a glance.
+
+The comment tree itself gets a few tweaks for skim-ability:
+
+- **Click anywhere on the indent gutter to collapse a comment** — no more hunting for the small `[-]` link.
+- **`[collapse root]`** link in every nested comment's header that collapses the whole top-level thread it belongs to and scrolls back to the (now-collapsed) root, so you can dismiss an entire branch and pick up where you left off without losing your place.
+- **Visible indentation gutter** with a thin separator on the left of each indent column, making reply depth easier to follow than counting indents.
+- **Dead-comment recolour**: dead comments shown via HN's `showdead` setting get a faint red colour instead of HN's grey-on-grey.
+- **Inline `<code>` and `<pre>` blocks** get a subtle grey background and rounded corners so monospace text inside comments actually looks like code.
 
 The page-bottom comment-submit form is also collapsed behind a **show comment box** link to keep the bottom of long threads tidy.
 
