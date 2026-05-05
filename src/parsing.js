@@ -109,6 +109,33 @@ export function pruneExpiredReadComments(map, nowMs, ttlMs) {
 	return out;
 }
 
+// Truncate a string to at most maxLen characters, appending an ellipsis
+// (…) when the original was longer. Used by the hover popups to keep
+// long item-text or user-about previews from overflowing the popup.
+//
+// Keeps it simple: counts code units, not graphemes. HN content is
+// overwhelmingly ASCII/BMP so this is fine in practice.
+export function truncateText(text, maxLen) {
+	if (typeof text !== "string") return "";
+	if (typeof maxLen !== "number" || maxLen < 0) return text;
+	if (text.length <= maxLen) return text;
+	return `${text.slice(0, maxLen)}…`;
+}
+
+// Pull the hostname out of an absolute URL, or null if the input isn't
+// parseable. Used by the item-info hover to render a "(github.com)"
+// badge next to a story's title — same convention HN uses on listing
+// pages.
+export function extractDomain(url) {
+	if (typeof url !== "string" || url === "") return null;
+	try {
+		const host = new URL(url).hostname;
+		return host.startsWith("www.") ? host.slice(4) : host;
+	} catch {
+		return null;
+	}
+}
+
 // Parse a raw comma-separated tag string into a canonical list: each name
 // trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
 // the inline tag input so duplicates never reach setUserTags.
