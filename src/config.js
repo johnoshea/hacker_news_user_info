@@ -18,3 +18,16 @@ export const USER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 // the page never finishes rendering. Firebase's HN endpoint is fast in the
 // common case; 8s is generous.
 export const USER_FETCH_TIMEOUT_MS = 8000;
+
+// How long the highlight-unread feature remembers the comment IDs it
+// saw on a previous visit to a given item. Three days matches refined-
+// hacker-news's default and means a thread you opened on Friday still
+// shows new replies on Monday morning.
+export const READ_COMMENTS_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+// The per-comment "[toggle replies]" link from refined-hacker-news's
+// toggle-all-comments-and-replies feature. Default off because adding
+// a link to every comment scales linearly with thread size and slows
+// page render on items with hundreds of comments. The fatitem-level
+// "[toggle all]" link is always on.
+export const TOGGLE_ALL_REPLIES_ENABLED = false;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.6
+// @version      0.7
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -39,6 +39,19 @@ const USER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 // the page never finishes rendering. Firebase's HN endpoint is fast in the
 // common case; 8s is generous.
 const USER_FETCH_TIMEOUT_MS = 8000;
+
+// How long the highlight-unread feature remembers the comment IDs it
+// saw on a previous visit to a given item. Three days matches refined-
+// hacker-news's default and means a thread you opened on Friday still
+// shows new replies on Monday morning.
+const READ_COMMENTS_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+// The per-comment "[toggle replies]" link from refined-hacker-news's
+// toggle-all-comments-and-replies feature. Default off because adding
+// a link to every comment scales linearly with thread size and slows
+// page render on items with hundreds of comments. The fatitem-level
+// "[toggle all]" link is always on.
+const TOGGLE_ALL_REPLIES_ENABLED = false;
 
 
 // ===== src/parsing.js =====
@@ -87,6 +100,72 @@ function findCommentRootIndices(indentLevels) {
 	return out;
 }
 
+// Split a string into alternating { kind: "text" } and { kind: "code" }
+// segments based on backtick pairs. Used by the backticks-to-monospace
+// pass to walk text nodes and replace them with DOM nodes that render
+// `inline code` segments inside <code> elements.
+//
+// Rules:
+//   - A `code` segment is the shortest run between two backticks. Empty
+//     pairs (two backticks with nothing between them) are not treated
+//     as code; they survive as text.
+//   - An unmatched backtick (no closing pair) stays in place inside the
+//     surrounding text segment.
+//   - The result preserves the original characters exactly when joined
+//     back together (text + "`" + code + "`" + text + ...).
+function splitBackticks(text) {
+	if (typeof text !== "string" || text === "") return [];
+	const segments = [];
+	const pattern = /`([^`]+)`/g;
+	let lastIndex = 0;
+	for (const match of text.matchAll(pattern)) {
+		const start = match.index;
+		if (start > lastIndex) {
+			segments.push({ kind: "text", value: text.slice(lastIndex, start) });
+		}
+		segments.push({ kind: "code", value: match[1] });
+		lastIndex = start + match[0].length;
+	}
+	if (lastIndex < text.length) {
+		segments.push({ kind: "text", value: text.slice(lastIndex) });
+	}
+	return segments;
+}
+
+// Given the comment IDs visible on the current page and the IDs we
+// stored on a previous visit to the same item, return the IDs that are
+// new (i.e. present now but not before). Used by highlight-unread to
+// decide which td.ind cells to mark.
+function findNewCommentIds(currentIds, storedIds) {
+	const seen = new Set(storedIds || []);
+	const out = [];
+	for (const id of currentIds || []) {
+		if (!seen.has(id)) out.push(id);
+	}
+	return out;
+}
+
+// True iff the entry was last updated within ttlMs of now. A missing
+// entry, missing fetchedAt, or stale entry returns false. Used both for
+// freshness checks at read time and for cleanup-on-load.
+function isReadCommentEntryFresh(entry, nowMs, ttlMs) {
+	if (!entry || typeof entry.fetchedAt !== "number") return false;
+	return nowMs - entry.fetchedAt <= ttlMs;
+}
+
+// Return a new map containing only the entries that are still fresh.
+// Used when persisting to drop expired item IDs from storage so the
+// readComments slice doesn't grow unboundedly.
+function pruneExpiredReadComments(map, nowMs, ttlMs) {
+	const out = {};
+	for (const [itemId, entry] of Object.entries(map || {})) {
+		if (isReadCommentEntryFresh(entry, nowMs, ttlMs)) {
+			out[itemId] = entry;
+		}
+	}
+	return out;
+}
+
 // Parse a raw comma-separated tag string into a canonical list: each name
 // trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
 // the inline tag input so duplicates never reach setUserTags.
@@ -115,6 +194,7 @@ function emptyState() {
 		tags: {}, // username -> [tagName, ...]
 		colors: {}, // tagName  -> { bgColor, textColor }
 		cache: {}, // username -> { created, karma, fetchedAt }
+		readComments: {}, // itemId -> { ids: [...], fetchedAt }
 	};
 }
 
@@ -200,6 +280,38 @@ function createStore(backend) {
 		},
 		setCachedUser(username, { created, karma }, nowMs) {
 			load().cache[username] = { created, karma, fetchedAt: nowMs };
+			save();
+		},
+		// Read-comments cache for highlight-unread. Returns the stored
+		// entry { ids, fetchedAt } if it exists, else null. The browser
+		// caller decides what to do with a missing entry (highlight
+		// nothing, since this is a first visit) vs a stale one (treat as
+		// missing — pruneReadComments below drops stale entries on every
+		// item-page load so this is mostly a belt-and-braces check).
+		getReadComments(itemId) {
+			const entry = load().readComments?.[itemId];
+			if (!entry) return null;
+			return { ids: entry.ids || [], fetchedAt: entry.fetchedAt || 0 };
+		},
+		// Replace the stored ID list for an item. Always overwrites — the
+		// caller decides whether to merge with previous ids or replace them.
+		// (We replace, since a comment that's no longer on the page must
+		// have been deleted/flagged, and there's no value in tracking it.)
+		setReadComments(itemId, ids, nowMs) {
+			const s = load();
+			if (!s.readComments) s.readComments = {};
+			s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
+			save();
+		},
+		// Drop expired entries from the readComments map. Run on every
+		// item-page load so a user who reads-then-never-revisits doesn't
+		// accumulate dead entries forever.
+		pruneReadComments(nowMs, ttlMs) {
+			const s = load();
+			const before = s.readComments || {};
+			const after = pruneExpiredReadComments(before, nowMs, ttlMs);
+			if (Object.keys(after).length === Object.keys(before).length) return;
+			s.readComments = after;
 			save();
 		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
@@ -957,6 +1069,31 @@ const STYLES = `
     a.hn-collapse-root:hover {
       text-decoration: underline;
     }
+
+    /* PR-3 additions. Highlight-unread paints the indent gutter with a
+       faint orange tint instead of a box-shadow so it doesn't fight the
+       PR-2 hover/gutter shadows on td.ind (multi-shadow gets fiddly). */
+    .hn-new-comment {
+      background-color: rgba(255, 102, 0, 0.18);
+    }
+
+    /* "[toggle all]" sits next to the existing fatitem subtext links;
+       "[toggle replies]" (when enabled) lives in each comment's comhead
+       like "[collapse root]". Same orange/underline treatment as the
+       collapse-root link for visual consistency. */
+    a.hn-toggle-all,
+    a.hn-toggle-all:link,
+    a.hn-toggle-all:visited,
+    a.hn-toggle-replies,
+    a.hn-toggle-replies:link,
+    a.hn-toggle-replies:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-toggle-all:hover,
+    a.hn-toggle-replies:hover {
+      text-decoration: underline;
+    }
   `;
 
 
@@ -1175,6 +1312,203 @@ function setupCollapseRootComment() {
 
 		head.append(link);
 	}
+}
+
+
+// ===== src/features/backticks-to-monospace.js =====
+
+// Walk the text nodes inside every .commtext and replace `inline code`
+// segments (delimited by backticks) with proper <code> elements. The
+// pure helper splitBackticks(text) does the actual splitting; this
+// module is the DOM glue.
+//
+// Skips text inside existing <code>, <pre>, and <a> elements so we
+// don't mangle pre-formatted code blocks or rewrite link text.
+
+
+const SKIP_TAGS = new Set(["code", "pre", "a"]);
+function transformBackticksToMonospace() {
+	for (const commtext of document.querySelectorAll(".commtext")) {
+		// Two-pass: collect candidate text nodes first, then mutate. A
+		// single pass that mutates while walking would have the walker
+		// skip nodes that get inserted during replacement.
+		const candidates = [];
+		const walker = document.createTreeWalker(commtext, NodeFilter.SHOW_TEXT, {
+			acceptNode(node) {
+				const parent = node.parentNode;
+				if (!parent) return NodeFilter.FILTER_REJECT;
+				const tag = parent.tagName?.toLowerCase();
+				if (SKIP_TAGS.has(tag)) return NodeFilter.FILTER_REJECT;
+				// Quick prefilter: a text node with no backticks won't
+				// match anything in splitBackticks, so don't bother.
+				if (!node.data.includes("`")) return NodeFilter.FILTER_REJECT;
+				return NodeFilter.FILTER_ACCEPT;
+			},
+		});
+		let n = walker.nextNode();
+		while (n !== null) {
+			candidates.push(n);
+			n = walker.nextNode();
+		}
+
+		for (const node of candidates) {
+			const segments = splitBackticks(node.data);
+			if (!segments.some((s) => s.kind === "code")) continue;
+			const fragment = document.createDocumentFragment();
+			for (const seg of segments) {
+				if (seg.kind === "text") {
+					fragment.appendChild(document.createTextNode(seg.value));
+				} else {
+					const code = document.createElement("code");
+					code.textContent = seg.value;
+					fragment.appendChild(code);
+				}
+			}
+			node.replaceWith(fragment);
+		}
+	}
+}
+
+
+// ===== src/features/toggle-all-comments.js =====
+
+// "[toggle all]" link in the fatitem subtext that fires every
+// top-level comment's a.togg in one click — useful on long threads
+// where you've already drilled into one subtree and want to dismiss
+// the rest, or want to expand a fully-collapsed page in one go.
+//
+// Optionally also adds a per-comment "[toggle replies]" link that
+// fires every direct child's a.togg. Gated by TOGGLE_ALL_REPLIES_ENABLED
+// in src/config.js because adding a link to every commentscales
+// linearly with thread size; refined-hacker-news warns that it slows
+// page render on items with hundreds of comments. Default off.
+
+
+
+function indentLevel(row) {
+	const img = row.querySelector("td.ind img");
+	if (!img) return 0;
+	const width = Number(img.getAttribute("width")) || img.width || 0;
+	return Math.round(width / 40);
+}
+
+function fireToggle(row) {
+	row.querySelector("a.togg")?.click();
+}
+function setupToggleAllComments() {
+	const subtext = document.querySelector(".fatitem .subtext");
+	const allRows = Array.from(document.querySelectorAll("tr.comtr"));
+	if (!subtext || allRows.length === 0) return;
+
+	const levels = allRows.map(indentLevel);
+
+	// Fatitem-level toggle: collect all root rows up front so the click
+	// handler doesn't re-query the DOM on every press.
+	const rootRows = allRows.filter((_, i) => levels[i] === 0);
+	if (rootRows.length > 0) {
+		const link = h("a", {
+			class: "hn-toggle-all",
+			href: "javascript:void(0)",
+			text: "toggle all",
+			onclick: (e) => {
+				e.preventDefault();
+				for (const row of rootRows) fireToggle(row);
+			},
+		});
+		// Match HN's subtext separator pattern: " | <link>".
+		subtext.append(document.createTextNode(" | "));
+		subtext.append(link);
+	}
+
+	if (!TOGGLE_ALL_REPLIES_ENABLED) return;
+
+	// Per-comment "[toggle replies]" links. For each row, find its
+	// immediate children (the contiguous run of following rows whose
+	// indent is exactly +1 deeper, stopping when we hit one at <= the
+	// parent's level). Skip rows that have no replies.
+	for (let i = 0; i < allRows.length; i++) {
+		const parent = allRows[i];
+		const parentLevel = levels[i];
+		const replies = [];
+		for (let j = i + 1; j < allRows.length; j++) {
+			if (levels[j] <= parentLevel) break;
+			if (levels[j] === parentLevel + 1) replies.push(allRows[j]);
+		}
+		if (replies.length === 0) continue;
+
+		const head = parent.querySelector("span.comhead");
+		if (!head) continue;
+
+		head.append(
+			h("a", {
+				class: "hn-toggle-replies",
+				href: "javascript:void(0)",
+				text: "[toggle replies]",
+				onclick: (e) => {
+					e.preventDefault();
+					for (const row of replies) fireToggle(row);
+				},
+			}),
+		);
+	}
+}
+
+
+// ===== src/features/highlight-unread-comments.js =====
+
+// Mark comment rows that weren't on the page the last time you visited
+// this thread. Keeps a per-item ID list in the consolidated store under
+// state.readComments[itemId] = { ids, fetchedAt }, with a 3-day TTL
+// (READ_COMMENTS_TTL_MS in config). Stale entries are pruned on every
+// item-page load so the slice can't grow unboundedly.
+//
+// First visit (no stored entry): nothing is highlighted, but every
+// visible comment ID is recorded so the *next* visit knows which
+// comments are new.
+//
+// Subsequent visits: ids in the current page that weren't in the
+// stored entry get a .hn-new-comment class on their td.ind cell.
+
+
+
+function getItemId() {
+	const params = new URLSearchParams(window.location.search);
+	return params.get("id") || null;
+}
+
+function getCurrentCommentIds() {
+	return Array.from(document.querySelectorAll("tr.comtr"))
+		.map((row) => row.id)
+		.filter(Boolean);
+}
+function setupHighlightUnreadComments({ store }) {
+	const itemId = getItemId();
+	if (!itemId) return;
+
+	const now = Date.now();
+
+	// Drop expired entries first so a user who hasn't visited a thread
+	// in months doesn't carry around its dead ID list forever.
+	store.pruneReadComments(now, READ_COMMENTS_TTL_MS);
+
+	const currentIds = getCurrentCommentIds();
+	if (currentIds.length === 0) return;
+
+	const stored = store.getReadComments(itemId);
+	const isFreshSecondVisit =
+		stored !== null && now - stored.fetchedAt <= READ_COMMENTS_TTL_MS;
+
+	if (isFreshSecondVisit) {
+		const newIds = findNewCommentIds(currentIds, stored.ids);
+		for (const id of newIds) {
+			const indent = document.getElementById(id)?.querySelector("td.ind");
+			if (indent) indent.classList.add("hn-new-comment");
+		}
+	}
+
+	// Always update the stored snapshot to match what's currently on
+	// the page — next visit's "new" set is derived from this.
+	store.setReadComments(itemId, currentIds, now);
 }
 
 
@@ -1980,6 +2314,9 @@ function createToolbar({ store, backend }) {
 
 
 
+
+
+
 GM_addStyle(STYLES);
 
 // Adapter from GM_* to the {get, set, list} interface the store and
@@ -2034,6 +2371,9 @@ if (isItemPage()) {
 	setupCommentBoxToggle();
 	setupClickIndentToggle();
 	setupCollapseRootComment();
+	transformBackticksToMonospace();
+	setupToggleAllComments();
+	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
 	toolbar.mount();
 }

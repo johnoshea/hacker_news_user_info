@@ -9,6 +9,7 @@ import {
 	STATE_KEY,
 	STATE_SCHEMA_VERSION,
 } from "./config.js";
+import { pruneExpiredReadComments } from "./parsing.js";
 
 export function emptyState() {
 	return {
@@ -17,6 +18,7 @@ export function emptyState() {
 		tags: {}, // username -> [tagName, ...]
 		colors: {}, // tagName  -> { bgColor, textColor }
 		cache: {}, // username -> { created, karma, fetchedAt }
+		readComments: {}, // itemId -> { ids: [...], fetchedAt }
 	};
 }
 
@@ -102,6 +104,38 @@ export function createStore(backend) {
 		},
 		setCachedUser(username, { created, karma }, nowMs) {
 			load().cache[username] = { created, karma, fetchedAt: nowMs };
+			save();
+		},
+		// Read-comments cache for highlight-unread. Returns the stored
+		// entry { ids, fetchedAt } if it exists, else null. The browser
+		// caller decides what to do with a missing entry (highlight
+		// nothing, since this is a first visit) vs a stale one (treat as
+		// missing — pruneReadComments below drops stale entries on every
+		// item-page load so this is mostly a belt-and-braces check).
+		getReadComments(itemId) {
+			const entry = load().readComments?.[itemId];
+			if (!entry) return null;
+			return { ids: entry.ids || [], fetchedAt: entry.fetchedAt || 0 };
+		},
+		// Replace the stored ID list for an item. Always overwrites — the
+		// caller decides whether to merge with previous ids or replace them.
+		// (We replace, since a comment that's no longer on the page must
+		// have been deleted/flagged, and there's no value in tracking it.)
+		setReadComments(itemId, ids, nowMs) {
+			const s = load();
+			if (!s.readComments) s.readComments = {};
+			s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
+			save();
+		},
+		// Drop expired entries from the readComments map. Run on every
+		// item-page load so a user who reads-then-never-revisits doesn't
+		// accumulate dead entries forever.
+		pruneReadComments(nowMs, ttlMs) {
+			const s = load();
+			const before = s.readComments || {};
+			const after = pruneExpiredReadComments(before, nowMs, ttlMs);
+			if (Object.keys(after).length === Object.keys(before).length) return;
+			s.readComments = after;
 			save();
 		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {

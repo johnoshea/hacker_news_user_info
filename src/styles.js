@@ -438,4 +438,29 @@ export const STYLES = `
     a.hn-collapse-root:hover {
       text-decoration: underline;
     }
+
+    /* PR-3 additions. Highlight-unread paints the indent gutter with a
+       faint orange tint instead of a box-shadow so it doesn't fight the
+       PR-2 hover/gutter shadows on td.ind (multi-shadow gets fiddly). */
+    .hn-new-comment {
+      background-color: rgba(255, 102, 0, 0.18);
+    }
+
+    /* "[toggle all]" sits next to the existing fatitem subtext links;
+       "[toggle replies]" (when enabled) lives in each comment's comhead
+       like "[collapse root]". Same orange/underline treatment as the
+       collapse-root link for visual consistency. */
+    a.hn-toggle-all,
+    a.hn-toggle-all:link,
+    a.hn-toggle-all:visited,
+    a.hn-toggle-replies,
+    a.hn-toggle-replies:link,
+    a.hn-toggle-replies:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-toggle-all:hover,
+    a.hn-toggle-replies:hover {
+      text-decoration: underline;
+    }
   `;

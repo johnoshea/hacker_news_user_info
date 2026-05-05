@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 
 1. **Site-wide legibility layer** (every HN page, `news.ycombinator.com/*`): font reset, sizing, gutters, full-width main, downvoted-comment restyling (black-on-faint-grey), quoted-text rendering (`>`-prefixed text wrapped in `<p class="quote">` with HN-orange accents), and `.rank` hidden. CSS comes from a `:root` block with `--colour-hn-orange`, `--colour-hn-orange-pale`, `--gutter`, and `--border-radius` tokens. Adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
-2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, and a "show comment box" toggle that collapses the page-bottom comment-submit form.
+2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, "toggle all" link on the fatitem subtext, backtick-wrapped text rendered as `<code>`, highlight for comments new since last visit, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, and a "show comment box" toggle that collapses the page-bottom comment-submit form.
 
-`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`) on every HN page and the enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `userRender.renderAllUsernames`, `toolbar.mount`) only on item pages.
+`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`) on every HN page and the enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `toolbar.mount`) only on item pages.
 
 ## Commands
 
@@ -28,7 +28,9 @@ After any edit under `src/`, run `just build` (or `just check`) so `script.js` s
 src/
   config.js                  Storage key, schema version, TTL/timeout constants
   parsing.js                 Pure helpers: timeSince, stripLeadingQuoteMarker, parseTagInput,
-                             findCommentRootIndices
+                             findCommentRootIndices, splitBackticks,
+                             findNewCommentIds, isReadCommentEntryFresh,
+                             pruneExpiredReadComments
   state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
   dom.js                     h() factory, findCommentParent, isItemPage
@@ -40,6 +42,12 @@ src/
     click-indent-toggle.js   setupClickIndentToggle: makes td.ind a click target for a.togg
     collapse-root-comment.js setupCollapseRootComment: appends "[collapse root]" link
                              to every non-root comment's comhead
+    backticks-to-monospace.js  transformBackticksToMonospace: walks .commtext text nodes,
+                             wraps `inline code` in <code> via splitBackticks
+    toggle-all-comments.js   setupToggleAllComments: "toggle all" link on fatitem subtext;
+                             gated per-comment "[toggle replies]" link via config flag
+    highlight-unread-comments.js setupHighlightUnreadComments: tints td.ind on comments
+                             that weren't on the page last time you visited this item
     user-render.js           createUserRender factory: renderAllUsernames + per-user rerender
                              (also adds the .hn-op class + " [op]" marker on OP's comments)
     tag-manager.js           createTagManager factory: overlay state machine
@@ -95,11 +103,17 @@ On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`
 
 ### Comment-tree tweaks (item pages only)
 
-A handful of small DOM passes that make the comment tree easier to read and faster to skim. All three live under `src/features/` and are invoked once after the page loads.
+A handful of small DOM passes that make the comment tree easier to read and faster to skim. All live under `src/features/` and are invoked once after the page loads.
 
 `setupClickIndentToggle()` (in `src/features/click-indent-toggle.js`) walks every `tr.comtr`, adds the `.hn-clickable-indent` class to its `td.ind`, and attaches a click handler that fires the row's native `a.togg`. The CSS adds `cursor: pointer` and a hover box-shadow so the gutter looks clickable.
 
 `setupCollapseRootComment()` (in `src/features/collapse-root-comment.js`) reads each comment's indent level from the width of `td.ind img` (HN renders one indent unit as 40px), passes the level array to the pure helper `findCommentRootIndices` in `src/parsing.js`, and uses the result to inject a `[collapse root]` link into every non-root comment's `span.comhead`. Clicking the link fires the root comment's `a.togg` and scrolls the page back to the (now-collapsed) root so the reader doesn't lose their place. Roots themselves don't get the link.
+
+`transformBackticksToMonospace()` (in `src/features/backticks-to-monospace.js`) walks the text nodes inside every `.commtext` with a `TreeWalker`, calls the pure helper `splitBackticks` (in `src/parsing.js`) to chop each text node into alternating text/code segments at backtick pairs, and replaces the original text node with a `DocumentFragment` of `Text` and `<code>` nodes. The walker rejects text inside existing `<code>`, `<pre>`, and `<a>` elements so we don't mangle pre-formatted code blocks or rewrite link text. Empty backtick pairs (`` `` ``) survive as text — the regex requires at least one non-backtick character between the marks.
+
+`setupToggleAllComments()` (in `src/features/toggle-all-comments.js`) appends a "toggle all" link to the fatitem subtext that fires `a.togg` on every top-level (`indent == 0`) `tr.comtr`. A second, opt-in pass under `TOGGLE_ALL_REPLIES_ENABLED` (in `src/config.js`, default `false`) adds a "[toggle replies]" link to every comment that has direct children. The reply pass is gated because adding a link to every comment scales linearly with thread size — refined-hacker-news warns that it slows page render on items with hundreds of comments.
+
+`setupHighlightUnreadComments({ store })` (in `src/features/highlight-unread-comments.js`) reads the current page's comment IDs (from `tr.comtr[id]`), compares them against the IDs we stored on the previous visit to the same item under `state.readComments[itemId]`, and adds the `.hn-new-comment` class to the `td.ind` of any ID that wasn't there before. The first visit to a thread doesn't highlight anything (there's nothing to compare against) but does store the ID list so the next visit can. Stale entries (older than `READ_COMMENTS_TTL_MS` = 3 days) are pruned on every item-page load via `store.pruneReadComments`. The pure helpers `findNewCommentIds`, `isReadCommentEntryFresh`, and `pruneExpiredReadComments` live in `src/parsing.js` and are unit-tested.
 
 The remaining tweaks (dead-comment recolour, indent-gutter separator, `<pre>` and inline `<code>` background) are CSS-only — see the rules at the bottom of `src/styles.js`. They piggyback on HN's own classes (`.commtext.cdd` for dead, `tr.comtr td.ind` for the gutter) so no JS pass is needed.
 
