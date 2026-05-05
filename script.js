@@ -14,16 +14,40 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=ycombinator.com
 // ==/UserScript==
 
-// =============================================================================
-// Pure logic (Node-testable). Everything above the browser-bootstrap guard
-// below must be free of DOM and GM_* references so it can be required from
-// tests under Node without a userscript runtime.
-// =============================================================================
+(function () {
+"use strict";
+
+// ===== src/config.js =====
+
+// Single backend key holding all user-visible state. Consolidating everything
+// here means exports are one JSON.stringify and imports are one assignment,
+// and it eliminates the legacy prefix-scan over GM_listValues.
+const STATE_KEY = "hn_state";
+const STATE_SCHEMA_VERSION = 1;
+
+// Pre-0.4 storage layout. Migration reads these on first run; after that the
+// keys are left in place for one version as a rollback safety net.
+const LEGACY_RATING_PREFIX = "hn_author_rating_";
+const LEGACY_TAGS_PREFIX = "hn_custom_tags_";
+const LEGACY_COLOR_PREFIX = "hn_custom_tag_color_";
+
+// How long a cached {created, karma} pair is considered fresh. Karma drifts
+// slowly; 6h means a repeat-visitor sees a fully-rendered page with zero
+// network requests for users they've already seen today.
+const USER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+// Per-request ceiling. Without it, GM_xmlhttpRequest can hang forever and
+// the page never finishes rendering. Firebase's HN endpoint is fast in the
+// common case; 8s is generous.
+const USER_FETCH_TIMEOUT_MS = 8000;
+
+
+// ===== src/parsing.js =====
+
+// Pure-logic helpers. No DOM, no GM_* APIs - safe to import under Node.
 
 const SECONDS_PER_DAY = 86400;
 const SECONDS_PER_MONTH = 2592000; // 30-day month, matches legacy behavior
 const SECONDS_PER_YEAR = 31536000; // 365-day year, matches legacy behavior
-
 function timeSince(createdUnixSeconds, nowUnixSeconds) {
 	const seconds = Math.floor(nowUnixSeconds - createdUnixSeconds);
 	const years = Math.floor(seconds / SECONDS_PER_YEAR);
@@ -34,12 +58,36 @@ function timeSince(createdUnixSeconds, nowUnixSeconds) {
 	return `${days} day${days === 1 ? "" : "s"}`;
 }
 
-// Single backend key holding all user-visible state. Consolidating everything
-// here means exports are one JSON.stringify and imports are one assignment,
-// and it eliminates the legacy prefix-scan over GM_listValues.
-const STATE_KEY = "hn_state";
-const STATE_SCHEMA_VERSION = 1;
+// Strip a leading "> " (with any surrounding whitespace) from a quoted-comment
+// text node, then trim the result. Used by the quote-rendering pass to set
+// the body of a `<p class="quote">` directly. Defensive against non-strings
+// because the caller pulls from DOM where `.data` could be missing.
+function stripLeadingQuoteMarker(text) {
+	if (typeof text !== "string") return "";
+	return text.replace(/^\s*>\s*/, "").trim();
+}
 
+// Parse a raw comma-separated tag string into a canonical list: each name
+// trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
+// the inline tag input so duplicates never reach setUserTags.
+function parseTagInput(text) {
+	const seen = new Set();
+	const out = [];
+	for (const part of (text || "").split(",")) {
+		const name = part.trim();
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		out.push(name);
+	}
+	return out;
+}
+
+
+// ===== src/state.js =====
+
+// Storage and pure state mutators. No DOM, no GM_* APIs - safe to import
+// under Node. The browser bootstrap (main.js) wraps the GM_* APIs into the
+// {get, set, list} backend that createStore expects.
 function emptyState() {
 	return {
 		schemaVersion: STATE_SCHEMA_VERSION,
@@ -123,7 +171,7 @@ function createStore(backend) {
 		},
 		// User-data cache. The `now` and `ttlMs` arguments are injected so tests
 		// can control time without mocking the clock. The browser call site
-		// passes Date.now() and a hardcoded TTL (see USER_CACHE_TTL_MS below).
+		// passes Date.now() and a hardcoded TTL (USER_CACHE_TTL_MS in config).
 		getCachedUser(username, nowMs, ttlMs) {
 			const entry = load().cache[username];
 			if (!entry) return null;
@@ -161,10 +209,6 @@ function createStore(backend) {
 // idempotent and a no-op when hn_state already exists.
 //
 // Backend must additionally support list(): string[].
-const LEGACY_RATING_PREFIX = "hn_author_rating_";
-const LEGACY_TAGS_PREFIX = "hn_custom_tags_";
-const LEGACY_COLOR_PREFIX = "hn_custom_tag_color_";
-
 function migrateLegacyKeys(backend) {
 	if (backend.get(STATE_KEY) !== undefined) return;
 	if (typeof backend.list !== "function") return;
@@ -232,7 +276,7 @@ function migrateLegacyKeys(backend) {
 
 // Accepts either the normalized export shape ({customTags, users}) or the
 // legacy flat-key dump ({hn_author_rating_<u>: N, hn_custom_tags_<u>: "...", ...})
-// and produces a consolidated state object. The cache slot is left empty —
+// and produces a consolidated state object. The cache slot is left empty -
 // import is a user-data operation, not a cache restore.
 function parseImport(data) {
 	const state = emptyState();
@@ -264,7 +308,7 @@ function parseImport(data) {
 		return state;
 	}
 
-	// Legacy flat-key format — mirrors migrateLegacyKeys but reads from a plain
+	// Legacy flat-key format - mirrors migrateLegacyKeys but reads from a plain
 	// object instead of a backend.
 	const parseJSON = (raw, fallback) => {
 		try {
@@ -311,7 +355,7 @@ function parseImport(data) {
 }
 
 // Normalized export shape. Stable across versions so old backups stay
-// interoperable. Cache is intentionally dropped — it's perf scaffolding,
+// interoperable. Cache is intentionally dropped - it's perf scaffolding,
 // not user data, and shouldn't bloat export files.
 function stateToExport(state) {
 	const customTags = {};
@@ -420,54 +464,46 @@ function countsFromState(state) {
 	return counts;
 }
 
-// Strip a leading "> " (with any surrounding whitespace) from a quoted-comment
-// text node, then trim the result. Used by the quote-rendering pass to set
-// the body of a `<p class="quote">` directly. Defensive against non-strings
-// because the caller pulls from DOM where `.data` could be missing.
-function stripLeadingQuoteMarker(text) {
-	if (typeof text !== "string") return "";
-	return text.replace(/^\s*>\s*/, "").trim();
-}
 
-// Parse a raw comma-separated tag string into a canonical list: each name
-// trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
-// the inline tag input so duplicates never reach setUserTags.
-function parseTagInput(text) {
-	const seen = new Set();
-	const out = [];
-	for (const part of (text || "").split(",")) {
-		const name = part.trim();
-		if (!name || seen.has(name)) continue;
-		seen.add(name);
-		out.push(name);
+// ===== src/dom.js =====
+
+// Tiny element factory. Accepts text content and event handlers but
+// intentionally does NOT accept innerHTML - all text goes through
+// textContent so it can't become an XSS foothold even if we later pass a
+// username or tag name through it.
+function h(tag, props = {}, children = []) {
+	const node = document.createElement(tag);
+	for (const [k, v] of Object.entries(props)) {
+		if (k === "class") node.className = v;
+		else if (k === "text") node.textContent = v;
+		else if (k.startsWith("on") && typeof v === "function") {
+			node.addEventListener(k.slice(2).toLowerCase(), v);
+		} else {
+			node[k] = v;
+		}
 	}
-	return out;
+	for (const child of children) {
+		if (child) node.appendChild(child);
+	}
+	return node;
+}
+function findCommentParent(usernameEl) {
+	return usernameEl.closest(".comhead") || usernameEl.parentElement;
+}
+function isItemPage() {
+	return window.location.pathname === "/item";
 }
 
-// Node test export. In the userscript environment `module` is undefined and
-// this block is a no-op.
-if (typeof module !== "undefined" && module.exports) {
-	module.exports = {
-		timeSince,
-		createStore,
-		migrateLegacyKeys,
-		parseImport,
-		stateToExport,
-		renameTagInState,
-		removeTagInState,
-		countsFromState,
-		parseTagInput,
-		stripLeadingQuoteMarker,
-	};
-}
 
-// =============================================================================
-// Browser bootstrap. Only runs inside a userscript runtime that exposes the
-// GM_* APIs. Everything below here is free to touch the DOM.
-// =============================================================================
+// ===== src/styles.js =====
 
-if (typeof GM_addStyle !== "undefined") {
-	GM_addStyle(`
+// CSS for the userscript: site-wide legibility tweaks plus our injected UI.
+// Tokens (`--colour-hn-orange`, `--gutter`, `--border-radius`) are declared
+// on `:root` so feature-specific rules added later can reuse them.
+//
+// The site-wide block is adapted from
+// https://github.com/mgladdish/website-customisations.
+const STYLES = `
     :root {
       --colour-hn-orange: #ff6600;
       --colour-hn-orange-pale: rgba(255, 102, 0, 0.05);
@@ -574,7 +610,7 @@ if (typeof GM_addStyle !== "undefined") {
     /* Our own injected UI (account info, custom tags, ratings, toolbar,
        tag-management overlay). The site-wide input padding rule would
        otherwise inflate our compact fields, so the inputs below carry
-       tighter padding overrides — but the orange border + radius from
+       tighter padding overrides - but the orange border + radius from
        the site-wide rule are kept on purpose. */
 
     .hn-post-layout {
@@ -850,31 +886,22 @@ if (typeof GM_addStyle !== "undefined") {
       border-color: var(--colour-hn-orange);
     }
     .hn-tagmgr-btn:hover { filter: brightness(0.95); }
-  `);
+  `;
 
-	// How long a cached {created, karma} pair is considered fresh. Karma drifts
-	// slowly; 6h means a repeat-visitor sees a fully-rendered page with zero
-	// network requests for users they've already seen today.
-	const USER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-	// Per-request ceiling. Without this, GM_xmlhttpRequest can hang forever and
-	// the page never finishes rendering. Firebase's HN endpoint is fast in the
-	// common case; 8s is generous.
-	const USER_FETCH_TIMEOUT_MS = 8000;
 
-	// Adapter from GM_* to the {get, set, list} interface the store and
-	// migration expect.
-	const backend = {
-		get: (key) => GM_getValue(key, undefined),
-		set: (key, value) => GM_setValue(key, value),
-		list: () => (typeof GM_listValues === "function" ? GM_listValues() : []),
-	};
+// ===== src/api.js =====
 
-	migrateLegacyKeys(backend);
-	const store = createStore(backend);
+// HN Firebase API access. Browser-side only - imports the GM_xmlhttpRequest
+// global at call time so this module never references it at import time
+// (so the build artifact, which inlines this, doesn't crash if loaded
+// outside a userscript runtime).
 
-	// Dedupe concurrent fetches for the same username (common: someone comments
-	// 10 times in a thread). Separate from the persistent cache because these
-	// are in-flight promises, not values.
+// Factory over a store. Returns { fetchUser } where fetchUser(username)
+// resolves to {created, karma} or null. Guards:
+//   - Persistent cache via store.getCachedUser / setCachedUser (TTL in config).
+//   - In-memory inflight Map dedupes concurrent fetches for the same user.
+//   - Per-request timeout so a hung request can't block page render forever.
+function createApi({ store }) {
 	const inflight = new Map();
 
 	function fetchUser(username) {
@@ -918,40 +945,125 @@ if (typeof GM_addStyle !== "undefined") {
 		return promise;
 	}
 
-	// Pastel HSL. The lightness floor (75%) guarantees black text is always the
-	// high-contrast choice, so we don't need a luminance calculator.
-	function randomPastelColor() {
-		const r = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1) + lo);
-		return `hsl(${r(0, 359)}, ${r(30, 100)}%, ${r(75, 95)}%)`;
-	}
+	return { fetchUser };
+}
 
+
+// ===== src/features/legibility.js =====
+
+// Site-wide legibility passes. Run on every HN page: restyle downvoted
+// comments and rewrite ">"-prefixed text into styled quote blocks.
+
+
+
+// HN comment styling: any .commtext that lacks the .c00 class has been
+// downvoted (HN drops the class to express grey-on-grey). We tag the
+// surrounding .comment so our CSS can restore black text on a faint-grey
+// background.
+function applyDownvotedClass() {
+	for (const el of document.querySelectorAll(".commtext")) {
+		if (!el.classList.contains("c00")) {
+			el.parentElement?.classList.add("downvoted");
+		}
+	}
+}
+
+// Find <i>/<p>/<span> whose first text-node child starts with ">" and
+// re-render it as a styled <p class="quote"> block. Two shapes seen in
+// HN markup:
+//   1. The first text node contains both the marker and the quoted body
+//      (e.g. <i>&gt; quoted text</i>) -> strip the marker, set the body
+//      as text on the new <p>.
+//   2. The first text node is just the marker, with the quoted content
+//      sitting in the next sibling (e.g. <i>&gt; <a>link</a></i>) -> move
+//      the sibling into the <p> so any nested elements survive.
+function transformQuotes() {
+	const candidates = document.querySelectorAll("i, p, span");
+	for (const el of candidates) {
+		if (el.classList.contains("quote")) continue;
+		const textNode = Array.from(el.childNodes).find(
+			(n) => n.nodeType === Node.TEXT_NODE,
+		);
+		if (!textNode?.data.trimStart().startsWith(">")) continue;
+
+		const p = h("p", { class: "quote" });
+		if (textNode.data.trim() === ">") {
+			const next = textNode.nextSibling;
+			if (next) p.appendChild(next);
+		} else {
+			p.textContent = stripLeadingQuoteMarker(textNode.data);
+		}
+		textNode.replaceWith(p);
+	}
+}
+
+
+// ===== src/features/comment-box-toggle.js =====
+
+// Item pages: hide the comment-submit form behind a "show comment box"
+// link. Returning early on missing nodes covers locked threads and
+// logged-out views, where the form (and possibly the row) isn't there.
+function setupCommentBoxToggle() {
+	const addComment = document.querySelector(".fatitem tr:last-of-type");
+	const commentForm = document.querySelector("form[action='comment']");
+	if (!addComment || !commentForm) return;
+
+	addComment.classList.add("hidden");
+
+	const showLink = h("a", {
+		href: "#",
+		text: "show comment box",
+	});
+	const showRow = h("tr", { class: "showComment" }, [
+		h("td", { colSpan: 2 }),
+		h("td", {}, [showLink]),
+	]);
+	const toggle = (e) => {
+		e.preventDefault();
+		showRow.classList.toggle("hidden");
+		addComment.classList.toggle("hidden");
+	};
+	showLink.addEventListener("click", toggle);
+
+	const hideLink = h("a", {
+		href: "#",
+		class: "hideComment",
+		text: "hide comment box",
+		onclick: toggle,
+	});
+
+	addComment.parentNode.insertBefore(showRow, addComment);
+	commentForm.append(hideLink);
+}
+
+
+// ===== src/features/user-render.js =====
+
+// Per-user inline UI on item pages: account info blurb, rating controls,
+// editable tag list, plus the rerender-by-user fan-out used after any
+// store write so all comments by the same author stay in sync.
+
+
+
+// Pastel HSL. The lightness floor (75%) guarantees black text is always the
+// high-contrast choice, so we don't need a luminance calculator.
+function randomPastelColor() {
+	const r = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1) + lo);
+	return `hsl(${r(0, 359)}, ${r(30, 100)}%, ${r(75, 95)}%)`;
+}
+
+// Factory. Wiring done in main.js:
+//   - `store` is the consolidated store from src/state.js
+//   - `fetchUser` is from src/api.js
+//   - `openTagManager` is the overlay opener from src/features/tag-manager.js
+//     (passed as a getter so it can refer to a forward-declared variable).
+function createUserRender({ store, fetchUser, openTagManager }) {
 	function ensureTagColor(tagName) {
 		const existing = store.getTagColor(tagName);
 		if (existing?.bgColor) return existing;
 		const color = { bgColor: randomPastelColor(), textColor: "black" };
 		store.setTagColor(tagName, color);
 		return color;
-	}
-
-	// Tiny element factory. Accepts text content and event handlers but
-	// intentionally does NOT accept innerHTML — all text goes through
-	// textContent so it can't become an XSS foothold even if we later pass a
-	// username or tag name through it.
-	function h(tag, props = {}, children = []) {
-		const node = document.createElement(tag);
-		for (const [k, v] of Object.entries(props)) {
-			if (k === "class") node.className = v;
-			else if (k === "text") node.textContent = v;
-			else if (k.startsWith("on") && typeof v === "function") {
-				node.addEventListener(k.slice(2).toLowerCase(), v);
-			} else {
-				node[k] = v;
-			}
-		}
-		for (const child of children) {
-			if (child) node.appendChild(child);
-		}
-		return node;
 	}
 
 	function renderRatingControls(username) {
@@ -1022,7 +1134,7 @@ if (typeof GM_addStyle !== "undefined") {
 		const editIcon = h("span", {
 			class: "hn-tag-icon",
 			title: "Edit tag",
-			text: "\u270F\uFE0F", // ✏️
+			text: "✏️", // pencil
 			onclick: (e) => {
 				e.stopPropagation();
 				const raw = prompt("Edit tag name:", tag.value);
@@ -1046,7 +1158,7 @@ if (typeof GM_addStyle !== "undefined") {
 		const removeIcon = h("span", {
 			class: "hn-tag-icon",
 			title: "Remove tag",
-			text: "\u2716", // ✖
+			text: "✖", // x
 			onclick: (e) => {
 				e.stopPropagation();
 				if (!confirm(`Remove tag "${tag.value}"?`)) return;
@@ -1062,7 +1174,7 @@ if (typeof GM_addStyle !== "undefined") {
 		const manageIcon = h("span", {
 			class: "hn-tag-icon",
 			title: "Manage all tags",
-			text: "\u2630", // ☰
+			text: "☰", // hamburger
 			onclick: (e) => {
 				e.stopPropagation();
 				openTagManager();
@@ -1158,10 +1270,6 @@ if (typeof GM_addStyle !== "undefined") {
 		});
 	}
 
-	function findCommentParent(usernameEl) {
-		return usernameEl.closest(".comhead") || usernameEl.parentElement;
-	}
-
 	// Skeleton-first: every row is built and inserted synchronously from the
 	// store. The age/karma blurb gets filled in as each fetch resolves, so a
 	// slow or hung request can't block the rest of the page.
@@ -1213,102 +1321,43 @@ if (typeof GM_addStyle !== "undefined") {
 		}
 	}
 
-	function exportState() {
-		const data = stateToExport(store._snapshot());
-		const blob = new Blob([JSON.stringify(data, null, 2)], {
-			type: "application/json",
-		});
-		const url = URL.createObjectURL(blob);
-		const a = h("a", {
-			href: url,
-			download: `hn-user-data-${new Date().toISOString().split("T")[0]}.json`,
-		});
-		document.body.appendChild(a);
-		a.click();
-		setTimeout(() => {
-			a.remove();
-			URL.revokeObjectURL(url);
-		}, 100);
-	}
+	return {
+		renderAllUsernames,
+		rerenderUserTags,
+		rerenderUserRatings,
+	};
+}
 
-	function importState() {
-		const input = h("input", { type: "file", accept: ".json" });
-		input.addEventListener("change", (event) => {
-			const file = event.target.files[0];
-			if (!file) return;
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				try {
-					const raw = JSON.parse(e.target.result);
-					const parsed = parseImport(raw);
-					// Write the consolidated blob directly and reload so the page
-					// rebuilds from a fresh store.
-					backend.set(STATE_KEY, JSON.stringify(parsed));
-					alert("Data imported successfully! The page will now reload.");
-					location.reload();
-				} catch (error) {
-					alert(`Error importing data: ${error.message}`);
-					console.error("Error importing data:", error);
-				}
-			};
-			reader.readAsText(file);
-		});
-		input.click();
-	}
 
-	function createToolbar() {
-		const dragHandle = h("div", { class: "hn-drag-handle" });
-		const buttons = h("div", { class: "hn-toolbar-buttons" }, [
-			h("button", {
-				class: "hn-toolbar-btn",
-				text: "Save state",
-				onclick: exportState,
-			}),
-			h("button", {
-				class: "hn-toolbar-btn",
-				text: "Restore state",
-				onclick: importState,
-			}),
-		]);
-		const toolbar = h("div", { class: "hn-toolbar" }, [dragHandle, buttons]);
-		document.body.appendChild(toolbar);
+// ===== src/features/tag-manager.js =====
 
-		// Drag listeners live only for the duration of a drag, rather than
-		// sitting on document forever.
-		dragHandle.addEventListener("mousedown", (e) => {
-			const rect = toolbar.getBoundingClientRect();
-			const offsetX = e.clientX - rect.left;
-			const offsetY = e.clientY - rect.top;
-			e.preventDefault();
+// Single-instance tag-management overlay. The overlay holds a draft
+// snapshot of {tags, colors}; edits mutate the draft via pure helpers,
+// and Save writes the draft back atomically.
 
-			const onMove = (ev) => {
-				toolbar.style.left = `${ev.clientX - offsetX}px`;
-				toolbar.style.top = `${ev.clientY - offsetY}px`;
-				toolbar.style.right = "auto";
-			};
-			const onUp = () => {
-				document.removeEventListener("mousemove", onMove);
-				document.removeEventListener("mouseup", onUp);
-			};
-			document.addEventListener("mousemove", onMove);
-			document.addEventListener("mouseup", onUp);
-		});
-	}
 
-	// Single-instance tag-management overlay. The overlay holds a draft
-	// snapshot of {tags, colors}; edits mutate the draft via pure helpers,
-	// and Save writes the draft back atomically.
+
+function isDraftDirty(liveSnapshot, draft) {
+	return (
+		JSON.stringify(liveSnapshot.tags || {}) !== JSON.stringify(draft.tags) ||
+		JSON.stringify(liveSnapshot.colors || {}) !== JSON.stringify(draft.colors)
+	);
+}
+
+// Factory. `rerenderUserTags(username)` is invoked after a successful Save
+// for every user visible on the page so their inline tag pills refresh.
+//
+// Returns:
+//   open()       - opens the overlay (no-op if already open)
+//   getActive()  - returns the active overlay handle (with markStale())
+//                  while open, null otherwise. Used by the cross-tab
+//                  listener in main.js to flag a remote write while the
+//                  overlay is mid-edit.
+function createTagManager({ store, rerenderUserTags }) {
 	let tagManagerOpen = false;
 	let activeTagManager = null;
 
-	function isDraftDirty(liveSnapshot, draft) {
-		return (
-			JSON.stringify(liveSnapshot.tags || {}) !== JSON.stringify(draft.tags) ||
-			JSON.stringify(liveSnapshot.colors || {}) !== JSON.stringify(draft.colors)
-		);
-	}
-
-	function openTagManager() {
+	function open() {
 		if (tagManagerOpen) return;
 		tagManagerOpen = true;
 
@@ -1556,7 +1605,7 @@ if (typeof GM_addStyle !== "undefined") {
 			const editIcon = h("span", {
 				class: "hn-tagmgr-icon",
 				title: "Rename tag",
-				text: "\u270F\uFE0F", // ✏️
+				text: "✏️", // pencil
 				onclick: () => {
 					// Swap name span for an input; Enter/blur commits, Escape
 					// cancels the field (does not close the overlay).
@@ -1629,7 +1678,7 @@ if (typeof GM_addStyle !== "undefined") {
 				const undoIcon = h("span", {
 					class: "hn-tagmgr-icon",
 					title: "Undo changes to this row",
-					text: "\u21A9", // ↩
+					text: "↩", // hook arrow
 					onclick: () => {
 						row.currentName = originalName;
 						row.pendingRemoval = false;
@@ -1642,7 +1691,7 @@ if (typeof GM_addStyle !== "undefined") {
 			const removeIcon = h("span", {
 				class: "hn-tagmgr-icon",
 				title: row.pendingRemoval ? "Keep tag" : "Remove tag",
-				text: "\u2716", // ✖
+				text: "✖", // x
 				onclick: () => {
 					row.pendingRemoval = !row.pendingRemoval;
 					renderOverlay();
@@ -1661,112 +1710,175 @@ if (typeof GM_addStyle !== "undefined") {
 		filterInput.focus();
 	}
 
-	function isItemPage() {
-		return window.location.pathname === "/item";
-	}
-
-	// HN comment styling: any .commtext that lacks the .c00 class has been
-	// downvoted (HN drops the class to express grey-on-grey). We tag the
-	// surrounding .comment so our CSS can restore black text on a faint-grey
-	// background.
-	function applyDownvotedClass() {
-		for (const el of document.querySelectorAll(".commtext")) {
-			if (!el.classList.contains("c00")) {
-				el.parentElement?.classList.add("downvoted");
-			}
-		}
-	}
-
-	// Find <i>/<p>/<span> whose first text-node child starts with ">" and
-	// re-render it as a styled <p class="quote"> block. Two shapes seen in
-	// HN markup:
-	//   1. The first text node contains both the marker and the quoted body
-	//      (e.g. <i>&gt; quoted text</i>) -> strip the marker, set the body
-	//      as text on the new <p>.
-	//   2. The first text node is just the marker, with the quoted content
-	//      sitting in the next sibling (e.g. <i>&gt; <a>link</a></i>) -> move
-	//      the sibling into the <p> so any nested elements survive.
-	function transformQuotes() {
-		const candidates = document.querySelectorAll("i, p, span");
-		for (const el of candidates) {
-			if (el.classList.contains("quote")) continue;
-			const textNode = Array.from(el.childNodes).find(
-				(n) => n.nodeType === Node.TEXT_NODE,
-			);
-			if (!textNode?.data.trimStart().startsWith(">")) continue;
-
-			const p = h("p", { class: "quote" });
-			if (textNode.data.trim() === ">") {
-				const next = textNode.nextSibling;
-				if (next) p.appendChild(next);
-			} else {
-				p.textContent = stripLeadingQuoteMarker(textNode.data);
-			}
-			textNode.replaceWith(p);
-		}
-	}
-
-	// Item pages: hide the comment-submit form behind a "show comment box"
-	// link. Returning early on missing nodes covers locked threads and
-	// logged-out views, where the form (and possibly the row) isn't there.
-	function setupCommentBoxToggle() {
-		const addComment = document.querySelector(".fatitem tr:last-of-type");
-		const commentForm = document.querySelector("form[action='comment']");
-		if (!addComment || !commentForm) return;
-
-		addComment.classList.add("hidden");
-
-		const showLink = h("a", {
-			href: "#",
-			text: "show comment box",
-		});
-		const showRow = h("tr", { class: "showComment" }, [
-			h("td", { colSpan: 2 }),
-			h("td", {}, [showLink]),
-		]);
-		const toggle = (e) => {
-			e.preventDefault();
-			showRow.classList.toggle("hidden");
-			addComment.classList.toggle("hidden");
-		};
-		showLink.addEventListener("click", toggle);
-
-		const hideLink = h("a", {
-			href: "#",
-			class: "hideComment",
-			text: "hide comment box",
-			onclick: toggle,
-		});
-
-		addComment.parentNode.insertBefore(showRow, addComment);
-		commentForm.append(hideLink);
-	}
-
-	// Sync state from other tabs. GM_addValueChangeListener fires whenever
-	// another tab writes to the same GM storage key. We invalidate the
-	// in-memory cache and re-render every user visible on this page.
-	if (typeof GM_addValueChangeListener === "function") {
-		GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
-			if (!remote) return;
-			activeTagManager?.markStale();
-			store._invalidate();
-			const usernames = new Set();
-			for (const el of document.querySelectorAll("[data-hn-user]")) {
-				usernames.add(el.dataset.hnUser);
-			}
-			for (const username of usernames) {
-				rerenderUserTags(username);
-				rerenderUserRatings(username);
-			}
-		});
-	}
-
-	applyDownvotedClass();
-	transformQuotes();
-
-	if (isItemPage()) {
-		setupCommentBoxToggle();
-		renderAllUsernames();
-		createToolbar();
-	}
+	return {
+		open,
+		getActive: () => activeTagManager,
+	};
 }
+
+
+// ===== src/features/toolbar.js =====
+
+// Floating toolbar with Save state / Restore state buttons. Mounted on
+// item pages.
+function createToolbar({ store, backend }) {
+	function exportState() {
+		const data = stateToExport(store._snapshot());
+		const blob = new Blob([JSON.stringify(data, null, 2)], {
+			type: "application/json",
+		});
+		const url = URL.createObjectURL(blob);
+		const a = h("a", {
+			href: url,
+			download: `hn-user-data-${new Date().toISOString().split("T")[0]}.json`,
+		});
+		document.body.appendChild(a);
+		a.click();
+		setTimeout(() => {
+			a.remove();
+			URL.revokeObjectURL(url);
+		}, 100);
+	}
+
+	function importState() {
+		const input = h("input", { type: "file", accept: ".json" });
+		input.addEventListener("change", (event) => {
+			const file = event.target.files[0];
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				try {
+					const raw = JSON.parse(e.target.result);
+					const parsed = parseImport(raw);
+					// Write the consolidated blob directly and reload so the page
+					// rebuilds from a fresh store.
+					backend.set(STATE_KEY, JSON.stringify(parsed));
+					alert("Data imported successfully! The page will now reload.");
+					location.reload();
+				} catch (error) {
+					alert(`Error importing data: ${error.message}`);
+					console.error("Error importing data:", error);
+				}
+			};
+			reader.readAsText(file);
+		});
+		input.click();
+	}
+
+	function mount() {
+		const dragHandle = h("div", { class: "hn-drag-handle" });
+		const buttons = h("div", { class: "hn-toolbar-buttons" }, [
+			h("button", {
+				class: "hn-toolbar-btn",
+				text: "Save state",
+				onclick: exportState,
+			}),
+			h("button", {
+				class: "hn-toolbar-btn",
+				text: "Restore state",
+				onclick: importState,
+			}),
+		]);
+		const toolbar = h("div", { class: "hn-toolbar" }, [dragHandle, buttons]);
+		document.body.appendChild(toolbar);
+
+		// Drag listeners live only for the duration of a drag, rather than
+		// sitting on document forever.
+		dragHandle.addEventListener("mousedown", (e) => {
+			const rect = toolbar.getBoundingClientRect();
+			const offsetX = e.clientX - rect.left;
+			const offsetY = e.clientY - rect.top;
+			e.preventDefault();
+
+			const onMove = (ev) => {
+				toolbar.style.left = `${ev.clientX - offsetX}px`;
+				toolbar.style.top = `${ev.clientY - offsetY}px`;
+				toolbar.style.right = "auto";
+			};
+			const onUp = () => {
+				document.removeEventListener("mousemove", onMove);
+				document.removeEventListener("mouseup", onUp);
+			};
+			document.addEventListener("mousemove", onMove);
+			document.addEventListener("mouseup", onUp);
+		});
+	}
+
+	return { mount };
+}
+
+
+// ===== src/main.js =====
+
+// Browser-side bootstrap. The build script wraps this (and every module
+// imported above it) in a single IIFE inside the userscript bundle, so
+// everything below runs once on load inside the userscript runtime.
+
+
+
+
+
+
+
+
+
+
+
+GM_addStyle(STYLES);
+
+// Adapter from GM_* to the {get, set, list} interface the store and
+// migration expect.
+const backend = {
+	get: (key) => GM_getValue(key, undefined),
+	set: (key, value) => GM_setValue(key, value),
+	list: () => (typeof GM_listValues === "function" ? GM_listValues() : []),
+};
+
+migrateLegacyKeys(backend);
+const store = createStore(backend);
+const { fetchUser } = createApi({ store });
+
+// Tag manager and user-render reference each other; both bindings exist by
+// the time either's stored callback runs (on a click), so the closures
+// resolve fine despite the forward reference.
+const tagManager = createTagManager({
+	store,
+	rerenderUserTags: (username) => userRender.rerenderUserTags(username),
+});
+const userRender = createUserRender({
+	store,
+	fetchUser,
+	openTagManager: () => tagManager.open(),
+});
+const toolbar = createToolbar({ store, backend });
+
+// Sync state from other tabs. GM_addValueChangeListener fires whenever
+// another tab writes to the same GM storage key. We invalidate the
+// in-memory cache and re-render every user visible on this page.
+if (typeof GM_addValueChangeListener === "function") {
+	GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
+		if (!remote) return;
+		tagManager.getActive()?.markStale();
+		store._invalidate();
+		const usernames = new Set();
+		for (const el of document.querySelectorAll("[data-hn-user]")) {
+			usernames.add(el.dataset.hnUser);
+		}
+		for (const username of usernames) {
+			userRender.rerenderUserTags(username);
+			userRender.rerenderUserRatings(username);
+		}
+	});
+}
+
+applyDownvotedClass();
+transformQuotes();
+
+if (isItemPage()) {
+	setupCommentBoxToggle();
+	userRender.renderAllUsernames();
+	toolbar.mount();
+}
+
+
+})();

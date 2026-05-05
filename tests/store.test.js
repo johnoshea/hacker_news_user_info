@@ -1,6 +1,6 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { createStore } = require("./_load");
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createStore } from "../src/state.js";
 
 // Backend contract: { get(key) -> string|undefined, set(key, string) }.
 // The store persists everything under a single key so export/import

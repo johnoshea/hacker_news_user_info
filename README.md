@@ -36,7 +36,7 @@ A small draggable toolbar in the top-right corner has **Save state** and **Resto
 2. Open [`script.js`](./script.js) in your browser and click the "Install" prompt your manager raises, or copy the file contents into a new script in the manager's dashboard.
 3. Visit Hacker News — the legibility tweaks apply on every page; the per-commenter augmentations appear on comment pages.
 
-There is no build step. The script is a single file.
+`script.js` is a single-file build artifact assembled from the modules under `src/`. End users only need that one file; see [Development](#development) below for how it's produced.
 
 ## Using it
 
@@ -72,14 +72,19 @@ Everything is stored locally in your userscript manager's storage. Nothing is se
 
 ## Development
 
-See [CLAUDE.md](./CLAUDE.md) for architecture notes. Common tasks:
+See [CLAUDE.md](./CLAUDE.md) for architecture notes. Source lives under `src/` (ES modules); `scripts/build.js` concatenates them, strips `import`/`export`, and wraps the result in an IIFE with the `==UserScript==` header to produce the single `script.js` users install.
+
+Common tasks:
 
 ```sh
 just test   # run the Node test suite (pure logic only)
 just lint   # biome lint + autofix
 just fmt    # biome format
-just check  # lint + format + test
+just build  # rebuild script.js from src/
+just check  # lint + format + test + build (the pre-commit gate)
 ```
+
+Always run `just build` (or `just check`) after editing `src/` so the built `script.js` stays in sync — CI fails the PR otherwise.
 
 Tests cover the pure-logic layer (storage, migration, cache, time formatting, import/export parsing). Rendering and GM_* integration are verified manually in a userscript manager.
 

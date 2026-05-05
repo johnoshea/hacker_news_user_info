@@ -1,6 +1,6 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { createStore } = require("./_load");
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createStore } from "../src/state.js";
 
 function makeFakeBackend(initial = {}) {
 	const data = { ...initial };

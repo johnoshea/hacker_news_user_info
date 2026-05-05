@@ -4,9 +4,12 @@ test:
     node --test "tests/*.test.js"
 
 lint:
-    biome lint --write script.js tests/
+    biome lint --write src/ tests/ scripts/
 
 fmt:
-    biome format --write script.js tests/
+    biome format --write src/ tests/ scripts/
 
-check: lint fmt test
+build:
+    node scripts/build.js
+
+check: lint fmt test build

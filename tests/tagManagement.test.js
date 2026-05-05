@@ -1,10 +1,11 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const {
-	renameTagInState,
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { parseTagInput } from "../src/parsing.js";
+import {
+	countsFromState,
 	removeTagInState,
-	parseTagInput,
-} = require("./_load");
+	renameTagInState,
+} from "../src/state.js";
 
 // Pure rename: when the destination name does not exist, the tag's color
 // entry moves to the new name and every user carrying the old name has it
@@ -135,7 +136,6 @@ test("removeTagInState: missing tag returns the same reference", () => {
 // user. Orphan tags (color entry only, no users) show as count 0.
 // Duplicates in a single user's list are counted once.
 test("countsFromState: counts distinct users per tag, includes orphans", () => {
-	const { countsFromState } = require("./_load");
 	const state = {
 		schemaVersion: 1,
 		ratings: { alice: 99 },

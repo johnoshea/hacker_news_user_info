@@ -1,8 +1,8 @@
 name: CI
 
 # No untrusted inputs are interpolated into `run:` steps — the only things
-# this workflow runs are `node --test` and `biome check` over files checked
-# out from the repo.
+# this workflow runs are `node --test`, `biome check`, and `node scripts/build.js`
+# over files checked out from the repo.
 on:
   push:
     branches: [main]
@@ -26,4 +26,11 @@ jobs:
           version: "2.4.10"
 
       - name: Biome check
-        run: biome check script.js tests/
+        run: biome check src/ tests/ scripts/
+
+      - name: Verify script.js is up to date with src/
+        # Catches PRs that change src/ but forget to rebuild. Users install the
+        # built artifact, so a stale script.js means features silently don't ship.
+        run: |
+          node scripts/build.js
+          git diff --exit-code script.js
