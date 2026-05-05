@@ -571,9 +571,10 @@ if (typeof GM_addStyle !== "undefined") {
     .hideComment { margin-left: var(--gutter); }
 
     /* Our own injected UI (account info, custom tags, ratings, toolbar,
-       tag-management overlay). The neutralizing padding/border on our inputs
-       below is deliberate: the site-wide rules above would otherwise inflate
-       them with a heavy orange border and large padding. */
+       tag-management overlay). The site-wide input padding rule would
+       otherwise inflate our compact fields, so the inputs below carry
+       tighter padding overrides — but the orange border + radius from
+       the site-wide rule are kept on purpose. */
 
     .hn-post-layout {
       display: grid;
@@ -652,9 +653,10 @@ if (typeof GM_addStyle !== "undefined") {
       line-height: 30px;
       display: inline-block;
       vertical-align: middle;
+      /* Tighter padding than the site-wide rule so the field stays
+         compact; the orange border + radius from the site-wide rule
+         are kept by design. */
       padding: 0 4px;
-      border: 1px solid #ccc;
-      border-radius: 2px;
     }
     .hn-rating-container {
       margin-left: 4px;
@@ -755,8 +757,6 @@ if (typeof GM_addStyle !== "undefined") {
       width: 100%;
       padding: 4px 6px;
       box-sizing: border-box;
-      border: 1px solid #ccc;
-      border-radius: 2px;
     }
     .hn-tagmgr-sort { display: flex; gap: 6px; }
     .hn-tagmgr-sort-btn {
@@ -807,8 +807,6 @@ if (typeof GM_addStyle !== "undefined") {
       flex: 1 1 auto;
       font-size: 1em;
       padding: 1px 5px;
-      border: 1px solid #ccc;
-      border-radius: 2px;
     }
     .hn-tagmgr-count {
       flex: 0 0 auto;
