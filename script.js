@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.8
+// @version      0.9
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -206,6 +206,79 @@ function extractDomain(url) {
 	} catch {
 		return null;
 	}
+}
+
+// Split a string into alternating { kind: "text" | "url" | "email" }
+// segments. Used by linkify-user-about to walk the about-text cell on
+// /user pages and replace plain-text URLs / email addresses with
+// clickable <a> elements.
+//
+// In-house instead of pulling in linkifyjs (saves ~12KB of dep we'd
+// barely use). The trade-off is that we don't handle weird URL shapes
+// (FTP, gopher, scheme-less domains like "example.com") — only http(s)
+// and email. That covers the overwhelming majority of HN about-texts.
+//
+// Trailing sentence punctuation (.,;:!?)]}>) is split back out into a
+// following text segment so "see https://example.com." renders as a
+// link followed by a literal period.
+function linkifySegments(text) {
+	if (typeof text !== "string" || text === "") return [];
+	const out = [];
+	const pattern = /(https?:\/\/[^\s<>"]+)|([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi;
+	const trailing = /[.,;:!?)\]}>]+$/;
+	let lastIndex = 0;
+	for (const match of text.matchAll(pattern)) {
+		const start = match.index;
+		if (start > lastIndex) {
+			out.push({ kind: "text", value: text.slice(lastIndex, start) });
+		}
+		const matched = match[0];
+		const trail = matched.match(trailing)?.[0] || "";
+		const linkBody = trail ? matched.slice(0, -trail.length) : matched;
+		const kind = match[1] ? "url" : "email";
+		// Defensive: if all that's left after trimming is empty, skip the
+		// link entirely and emit the original characters as text.
+		if (!linkBody) {
+			out.push({ kind: "text", value: matched });
+		} else {
+			out.push({ kind, value: linkBody });
+			if (trail) out.push({ kind: "text", value: trail });
+		}
+		lastIndex = start + matched.length;
+	}
+	if (lastIndex < text.length) {
+		out.push({ kind: "text", value: text.slice(lastIndex) });
+	}
+	return out;
+}
+
+// Sort a story list by the chosen mode. Stories must carry
+// { id, score, commentsCount, defaultRank } at minimum (other fields
+// are passed through unchanged). Mode "default" restores HN's
+// server-side ranking; "time" newest-first by id; "score" highest
+// first; "ratio" highest comments-to-score ratio first (a rough
+// "discussion intensity" proxy that surfaces controversial items).
+function sortStoriesBy(stories, mode) {
+	const sorted = (stories || []).slice();
+	switch (mode) {
+		case "time":
+			sorted.sort((a, b) => Number(b.id) - Number(a.id));
+			break;
+		case "score":
+			sorted.sort((a, b) => (b.score || 0) - (a.score || 0));
+			break;
+		case "ratio":
+			sorted.sort((a, b) => {
+				const ra = (a.commentsCount || 0) / Math.max(a.score || 1, 1);
+				const rb = (b.commentsCount || 0) / Math.max(b.score || 1, 1);
+				return rb - ra;
+			});
+			break;
+		default: // "default"
+			sorted.sort((a, b) => (a.defaultRank || 0) - (b.defaultRank || 0));
+			break;
+	}
+	return sorted;
 }
 
 // Parse a raw comma-separated tag string into a canonical list: each name
@@ -1194,6 +1267,41 @@ const STYLES = `
       max-height: 8em;
       overflow: hidden;
     }
+
+    /* PR-5: sort-stories dropdown sits above table.itemlist on listing
+       pages. Match HN's subtext font size so it doesn't dominate the
+       layout. */
+    .hn-sort-bar {
+      padding: 6px 10px;
+      font-size: 0.8em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .hn-sort-select {
+      padding: 1px 4px;
+      font-size: inherit;
+    }
+    a.hn-sort-reverse,
+    a.hn-sort-reverse:link,
+    a.hn-sort-reverse:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-sort-reverse:hover {
+      text-decoration: underline;
+    }
+
+    /* reply-inline injects HN's own reply/edit/delete <form> into
+       div.reply with this class so we can give it some top margin
+       (otherwise it bumps right up against the parent comment). */
+    .hn-injected-form {
+      margin-top: 10px;
+    }
+    .hn-reply-loader {
+      color: #888;
+      font-size: 0.85em;
+    }
   `;
 
 
@@ -1902,6 +2010,395 @@ function setupItemInfoHover({ fetchItem, popup }) {
 			() => fetchItem(id),
 			(digest) => renderItemPopup(digest),
 		);
+	}
+}
+
+
+// ===== src/features/linkify-user-about.js =====
+
+// On /user pages, walk the about-cell text nodes and replace plain-
+// text URLs / email addresses with clickable <a> elements. The pure
+// helper linkifySegments (in src/parsing.js) does the splitting; this
+// module is the DOM glue.
+//
+// Skips text already inside an <a> so HN's own pre-existing links
+// don't get wrapped a second time. Refined-hacker-news pulls in
+// linkifyjs for this; we use a small in-house regex linker instead
+// to avoid the npm dep.
+
+
+function findAboutCell() {
+	// HN's user page has a nested table inside #hnmain; the inner table
+	// has rows for "user:", "created:", "karma:", "about:". The "about:"
+	// label is in the first cell; the body is in the next sibling cell.
+	const rows = document.querySelectorAll("#hnmain table table tr");
+	for (const row of rows) {
+		const labelCell = row.querySelector("td");
+		if (!labelCell) continue;
+		if (labelCell.textContent.trim() === "about:") {
+			return labelCell.nextElementSibling;
+		}
+	}
+	return null;
+}
+
+function isInsideAnchor(node) {
+	let cursor = node.parentNode;
+	while (cursor && cursor.nodeType === Node.ELEMENT_NODE) {
+		if (cursor.tagName === "A") return true;
+		cursor = cursor.parentNode;
+	}
+	return false;
+}
+
+function buildLinkifiedFragment(text) {
+	const fragment = document.createDocumentFragment();
+	for (const seg of linkifySegments(text)) {
+		if (seg.kind === "text") {
+			fragment.appendChild(document.createTextNode(seg.value));
+		} else if (seg.kind === "url") {
+			const a = document.createElement("a");
+			a.href = seg.value;
+			a.rel = "noopener noreferrer";
+			a.textContent = seg.value;
+			fragment.appendChild(a);
+		} else if (seg.kind === "email") {
+			const a = document.createElement("a");
+			a.href = `mailto:${seg.value}`;
+			a.rel = "noopener noreferrer";
+			a.textContent = seg.value;
+			fragment.appendChild(a);
+		}
+	}
+	return fragment;
+}
+function setupLinkifyUserAbout() {
+	if (window.location.pathname !== "/user") return;
+	const cell = findAboutCell();
+	if (!cell) return;
+
+	// Two-pass walk to avoid the walker skipping over text nodes we
+	// just inserted while replacing.
+	const candidates = [];
+	const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT, {
+		acceptNode(node) {
+			if (isInsideAnchor(node)) return NodeFilter.FILTER_REJECT;
+			const segs = linkifySegments(node.data);
+			const hasLink = segs.some((s) => s.kind === "url" || s.kind === "email");
+			return hasLink ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+		},
+	});
+	let n = walker.nextNode();
+	while (n !== null) {
+		candidates.push(n);
+		n = walker.nextNode();
+	}
+
+	for (const node of candidates) {
+		const fragment = buildLinkifiedFragment(node.data);
+		node.replaceWith(fragment);
+	}
+}
+
+
+// ===== src/features/sort-stories.js =====
+
+// On listing pages (/news, /newest, /ask, /show, /best, /front, etc.)
+// add a "sort: …" dropdown above table.itemlist. Selecting an option
+// reorders the story rows in place; a "reverse" link flips the
+// current order. Sort options:
+//   - default: HN's server-supplied rank
+//   - time:    newer items first (by id, which is monotonically
+//              increasing)
+//   - score:   highest first
+//   - ratio:   comments/score descending — proxy for "most-discussed
+//              given its score", surfaces controversial threads
+//
+// All three of these are non-persistent (per page load). The pure
+// helper sortStoriesBy in src/parsing.js does the actual ordering.
+
+
+
+const MODES = [
+	{ value: "default", label: "default" },
+	{ value: "time", label: "time" },
+	{ value: "score", label: "score" },
+	{ value: "ratio", label: "comments/score ratio" },
+];
+
+// Read each story's metadata + the 3 row group it occupies in
+// table.itemlist > tbody. HN renders each story as exactly:
+//   <tr class="athing">    -- title row, id=NNNN
+//   <tr>...</tr>           -- subtext row (score, by, time, comments)
+//   <tr style="height:5px">-- spacer row
+function parseStoryRows(table) {
+	const rows = Array.from(table.querySelectorAll("tbody > tr"));
+	const stories = [];
+	for (let i = 0; i < rows.length; i++) {
+		const row = rows[i];
+		if (!row.classList.contains("athing")) continue;
+		const subtext = rows[i + 1];
+		if (!subtext) continue;
+		const spacer = rows[i + 2];
+
+		const id = row.id;
+		const rankText = row.querySelector(".rank")?.textContent || "";
+		const defaultRank =
+			Number(rankText.replace(/\.$/, "")) || stories.length + 1;
+		const scoreText = subtext.querySelector(".score")?.textContent || "";
+		const score = Number(scoreText.split(" ")[0]) || 0;
+		// Comment count: the last "X comments" / "discuss" link in the
+		// subtext. "discuss" means 0 comments; missing means it's a job
+		// posting (no discussion).
+		let commentsCount = 0;
+		const commentLinks = subtext.querySelectorAll('a[href^="item?id="]');
+		const lastLink = commentLinks[commentLinks.length - 1];
+		if (lastLink) {
+			const txt = lastLink.textContent.trim();
+			const m = txt.match(/^(\d+)/);
+			if (m) commentsCount = Number(m[1]);
+		}
+
+		const elements = [row, subtext];
+		if (spacer && !spacer.classList.contains("athing")) {
+			elements.push(spacer);
+		}
+		stories.push({ id, score, commentsCount, defaultRank, elements });
+	}
+	return stories;
+}
+
+function rerenderStories(tbody, stories) {
+	// HN appends a "More" link as the last row of itemlist (and a
+	// matching morespace row above it). Preserve those at the end so
+	// pagination still works after reorder.
+	const allRows = Array.from(tbody.children);
+	const moreRow = allRows[allRows.length - 1];
+	const moreSpace = allRows[allRows.length - 2];
+
+	// Detach every story group's rows, then re-append in the requested
+	// order. The DOM mutations are cheap because we're just moving
+	// existing elements, not creating new ones.
+	for (const story of stories) {
+		for (const el of story.elements) {
+			el.remove();
+		}
+	}
+
+	// Find a stable insertion point: just before moreSpace (if present)
+	// or at the end otherwise.
+	const anchor =
+		moreSpace && tbody.contains(moreSpace) ? moreSpace : moreRow || null;
+	for (const story of stories) {
+		for (const el of story.elements) {
+			if (anchor && tbody.contains(anchor)) {
+				tbody.insertBefore(el, anchor);
+			} else {
+				tbody.appendChild(el);
+			}
+		}
+	}
+}
+function setupSortStories() {
+	const table = document.querySelector("table.itemlist");
+	if (!table) return;
+	const tbody = table.querySelector("tbody");
+	if (!tbody) return;
+
+	// Capture the original story list (with default-rank metadata) once.
+	// Subsequent sorts work from this snapshot so "default" really
+	// restores the server-supplied ordering, not the most recent sort.
+	const original = parseStoryRows(table);
+	if (original.length === 0) return;
+
+	const select = h("select", { class: "hn-sort-select" });
+	for (const { value, label } of MODES) {
+		const option = document.createElement("option");
+		option.value = value;
+		option.textContent = label;
+		select.appendChild(option);
+	}
+	const reverse = h("a", {
+		class: "hn-sort-reverse",
+		href: "javascript:void(0)",
+		text: "reverse",
+	});
+
+	let currentMode = "default";
+	let isReversed = false;
+
+	function applyOrder() {
+		let stories = sortStoriesBy(original, currentMode);
+		if (isReversed) stories = stories.slice().reverse();
+		rerenderStories(tbody, stories);
+	}
+
+	select.addEventListener("change", () => {
+		currentMode = select.value;
+		isReversed = false;
+		applyOrder();
+	});
+	reverse.addEventListener("click", (e) => {
+		e.preventDefault();
+		isReversed = !isReversed;
+		applyOrder();
+	});
+
+	const bar = h("div", { class: "hn-sort-bar" }, [
+		h("label", { text: "sort: ", htmlFor: "hn-sort-select" }),
+		select,
+		reverse,
+	]);
+	table.parentNode.insertBefore(bar, table);
+}
+
+
+// ===== src/features/reply-inline.js =====
+
+// Inline reply / edit / delete: instead of navigating away to
+// /reply?id=N or /edit?id=N when the user clicks one of those links,
+// fetch the page in the background and inject its <form> into the
+// comment's div.reply. Click again to hide. If text is selected
+// before the click, prepend it as a "> " quoted block to the
+// textarea so users can quote-reply with the keyboard.
+//
+// Adapted from refined-hacker-news's reply-without-leaving-page,
+// minus the italics-on-quote option (always plain "> "). Network
+// fetches go through GM_xmlhttpRequest with a timeout — without it
+// a hung request would silently strand the spinner forever.
+
+
+const FETCH_TIMEOUT_MS = 8000;
+
+function fetchPageDom(url) {
+	return new Promise((resolve) => {
+		GM_xmlhttpRequest({
+			method: "GET",
+			url,
+			timeout: FETCH_TIMEOUT_MS,
+			onload: (response) => {
+				if (response.status !== 200 || !response.responseText) {
+					resolve(null);
+					return;
+				}
+				try {
+					const doc = new DOMParser().parseFromString(
+						response.responseText,
+						"text/html",
+					);
+					resolve(doc);
+				} catch (_err) {
+					resolve(null);
+				}
+			},
+			onerror: () => resolve(null),
+			ontimeout: () => resolve(null),
+		});
+	});
+}
+
+// Wrap the user's current text selection (if any) into a "> "-prefixed
+// block, suitable for prepending to a reply textarea.
+function quoteSelection() {
+	const text = window.getSelection().toString().trim();
+	if (!text) return "";
+	return text
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) => `> ${line}`)
+		.join("\n\n");
+}
+
+function isClickModified(event) {
+	return (
+		event.button !== 0 ||
+		event.ctrlKey ||
+		event.metaKey ||
+		event.shiftKey ||
+		event.altKey
+	);
+}
+
+function attachActionLink(comment, link, replyDiv, state) {
+	const originalText = link.textContent;
+
+	link.addEventListener("click", async (event) => {
+		// Modified clicks (cmd/ctrl/middle/shift) keep their default
+		// behaviour — opening in a new tab is still useful.
+		if (isClickModified(event)) return;
+		event.preventDefault();
+
+		const quoted = quoteSelection();
+
+		// If a form is currently open from any action on this comment,
+		// remove it. If the same button was clicked, that's the toggle-
+		// off path; if a different button, fall through after removal
+		// to fetch the new form.
+		if (state.activeForm) {
+			state.activeForm.remove();
+			state.activeForm = null;
+			if (state.activeButton) {
+				state.activeButton.textContent = state.activeButton.dataset.hnOriginal;
+				state.activeButton.dataset.hnOriginal = "";
+			}
+			const wasSameButton = state.activeButton === link;
+			state.activeButton = null;
+			if (wasSameButton) return;
+		}
+
+		// Visual cue while the fetch is in flight.
+		const loader = h("span", {
+			class: "hn-reply-loader",
+			text: " (loading…)",
+		});
+		link.after(loader);
+
+		const dom = await fetchPageDom(link.href);
+		loader.remove();
+		if (!dom) {
+			alert(
+				"Couldn't load the form for that action. Try clicking the link directly to navigate to the page.",
+			);
+			return;
+		}
+		const form = dom.querySelector("form");
+		if (!form) {
+			alert(
+				"The fetched page didn't contain a form. Try clicking the link directly.",
+			);
+			return;
+		}
+		form.classList.add("hn-injected-form");
+
+		state.activeForm = form;
+		state.activeButton = link;
+		link.dataset.hnOriginal = originalText;
+		link.textContent = `hide ${originalText}`;
+		replyDiv.append(form);
+
+		const textarea = form.querySelector("textarea");
+		if (textarea) {
+			if (quoted.length > 0) {
+				textarea.value = `${textarea.value ? `${textarea.value}\n\n` : ""}${quoted}\n\n`;
+			}
+			textarea.focus();
+		}
+	});
+}
+function setupReplyInline() {
+	for (const comment of document.querySelectorAll("tr.comtr")) {
+		const replyDiv = comment.querySelector("div.reply");
+		if (!replyDiv) continue;
+
+		// Per-comment shared state across the action buttons so opening
+		// one form auto-closes another on the same comment.
+		const state = { activeForm: null, activeButton: null };
+
+		for (const action of ["reply", "edit", "delete-confirm"]) {
+			const link = comment.querySelector(`a[href^="${action}"]`);
+			if (link) attachActionLink(comment, link, replyDiv, state);
+		}
 	}
 }
 
@@ -2714,6 +3211,9 @@ function createToolbar({ store, backend }) {
 
 
 
+
+
+
 GM_addStyle(STYLES);
 
 // Adapter from GM_* to the {get, set, list} interface the store and
@@ -2767,6 +3267,10 @@ transformQuotes();
 // User-info hover wires every .hnuser on every page (except /user
 // itself, which the feature checks internally).
 setupUserInfoHover({ fetchUser, popup: hoverPopup });
+// Linkify and sort-stories are page-gated internally (linkify by
+// pathname, sort by table.itemlist presence), so call unconditionally.
+setupLinkifyUserAbout();
+setupSortStories();
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
@@ -2777,6 +3281,7 @@ if (isItemPage()) {
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
+	setupReplyInline();
 	toolbar.mount();
 }
 

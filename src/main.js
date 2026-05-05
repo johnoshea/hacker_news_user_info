@@ -13,6 +13,9 @@ import { setupHighlightUnreadComments } from "./features/highlight-unread-commen
 import { createHoverPopup } from "./features/hover-popup.js";
 import { setupItemInfoHover } from "./features/item-info-hover.js";
 import { applyDownvotedClass, transformQuotes } from "./features/legibility.js";
+import { setupLinkifyUserAbout } from "./features/linkify-user-about.js";
+import { setupReplyInline } from "./features/reply-inline.js";
+import { setupSortStories } from "./features/sort-stories.js";
 import { createTagManager } from "./features/tag-manager.js";
 import { setupToggleAllComments } from "./features/toggle-all-comments.js";
 import { createToolbar } from "./features/toolbar.js";
@@ -74,6 +77,10 @@ transformQuotes();
 // User-info hover wires every .hnuser on every page (except /user
 // itself, which the feature checks internally).
 setupUserInfoHover({ fetchUser, popup: hoverPopup });
+// Linkify and sort-stories are page-gated internally (linkify by
+// pathname, sort by table.itemlist presence), so call unconditionally.
+setupLinkifyUserAbout();
+setupSortStories();
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
@@ -84,5 +91,6 @@ if (isItemPage()) {
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
+	setupReplyInline();
 	toolbar.mount();
 }

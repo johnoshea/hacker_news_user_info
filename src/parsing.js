@@ -136,6 +136,79 @@ export function extractDomain(url) {
 	}
 }
 
+// Split a string into alternating { kind: "text" | "url" | "email" }
+// segments. Used by linkify-user-about to walk the about-text cell on
+// /user pages and replace plain-text URLs / email addresses with
+// clickable <a> elements.
+//
+// In-house instead of pulling in linkifyjs (saves ~12KB of dep we'd
+// barely use). The trade-off is that we don't handle weird URL shapes
+// (FTP, gopher, scheme-less domains like "example.com") — only http(s)
+// and email. That covers the overwhelming majority of HN about-texts.
+//
+// Trailing sentence punctuation (.,;:!?)]}>) is split back out into a
+// following text segment so "see https://example.com." renders as a
+// link followed by a literal period.
+export function linkifySegments(text) {
+	if (typeof text !== "string" || text === "") return [];
+	const out = [];
+	const pattern = /(https?:\/\/[^\s<>"]+)|([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/gi;
+	const trailing = /[.,;:!?)\]}>]+$/;
+	let lastIndex = 0;
+	for (const match of text.matchAll(pattern)) {
+		const start = match.index;
+		if (start > lastIndex) {
+			out.push({ kind: "text", value: text.slice(lastIndex, start) });
+		}
+		const matched = match[0];
+		const trail = matched.match(trailing)?.[0] || "";
+		const linkBody = trail ? matched.slice(0, -trail.length) : matched;
+		const kind = match[1] ? "url" : "email";
+		// Defensive: if all that's left after trimming is empty, skip the
+		// link entirely and emit the original characters as text.
+		if (!linkBody) {
+			out.push({ kind: "text", value: matched });
+		} else {
+			out.push({ kind, value: linkBody });
+			if (trail) out.push({ kind: "text", value: trail });
+		}
+		lastIndex = start + matched.length;
+	}
+	if (lastIndex < text.length) {
+		out.push({ kind: "text", value: text.slice(lastIndex) });
+	}
+	return out;
+}
+
+// Sort a story list by the chosen mode. Stories must carry
+// { id, score, commentsCount, defaultRank } at minimum (other fields
+// are passed through unchanged). Mode "default" restores HN's
+// server-side ranking; "time" newest-first by id; "score" highest
+// first; "ratio" highest comments-to-score ratio first (a rough
+// "discussion intensity" proxy that surfaces controversial items).
+export function sortStoriesBy(stories, mode) {
+	const sorted = (stories || []).slice();
+	switch (mode) {
+		case "time":
+			sorted.sort((a, b) => Number(b.id) - Number(a.id));
+			break;
+		case "score":
+			sorted.sort((a, b) => (b.score || 0) - (a.score || 0));
+			break;
+		case "ratio":
+			sorted.sort((a, b) => {
+				const ra = (a.commentsCount || 0) / Math.max(a.score || 1, 1);
+				const rb = (b.commentsCount || 0) / Math.max(b.score || 1, 1);
+				return rb - ra;
+			});
+			break;
+		default: // "default"
+			sorted.sort((a, b) => (a.defaultRank || 0) - (b.defaultRank || 0));
+			break;
+	}
+	return sorted;
+}
+
 // Parse a raw comma-separated tag string into a canonical list: each name
 // trimmed, empty entries dropped, duplicates (first-wins) removed. Used by
 // the inline tag input so duplicates never reach setUserTags.

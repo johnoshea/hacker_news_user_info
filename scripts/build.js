@@ -34,6 +34,9 @@ const SOURCES = [
 	"src/features/hover-popup.js",
 	"src/features/user-info-hover.js",
 	"src/features/item-info-hover.js",
+	"src/features/linkify-user-about.js",
+	"src/features/sort-stories.js",
+	"src/features/reply-inline.js",
 	"src/features/user-render.js",
 	"src/features/tag-manager.js",
 	"src/features/toolbar.js",
@@ -43,7 +46,7 @@ const SOURCES = [
 const HEADER = `// ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.8
+// @version      0.9
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*

@@ -499,4 +499,39 @@ export const STYLES = `
       max-height: 8em;
       overflow: hidden;
     }
+
+    /* PR-5: sort-stories dropdown sits above table.itemlist on listing
+       pages. Match HN's subtext font size so it doesn't dominate the
+       layout. */
+    .hn-sort-bar {
+      padding: 6px 10px;
+      font-size: 0.8em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .hn-sort-select {
+      padding: 1px 4px;
+      font-size: inherit;
+    }
+    a.hn-sort-reverse,
+    a.hn-sort-reverse:link,
+    a.hn-sort-reverse:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-sort-reverse:hover {
+      text-decoration: underline;
+    }
+
+    /* reply-inline injects HN's own reply/edit/delete <form> into
+       div.reply with this class so we can give it some top margin
+       (otherwise it bumps right up against the parent comment). */
+    .hn-injected-form {
+      margin-top: 10px;
+    }
+    .hn-reply-loader {
+      color: #888;
+      font-size: 0.85em;
+    }
   `;

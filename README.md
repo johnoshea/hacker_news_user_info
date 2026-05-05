@@ -12,6 +12,8 @@ A userscript that makes Hacker News easier to read and annotates every comment w
 - **Readable downvoted comments**: black text on a faint-grey background instead of HN's default grey-on-grey.
 - **Quoted-text rendering**: lines starting with `>` get an HN-orange left border, faint orange background, and italic body — easier to spot a quote at a glance.
 - **Hidden cruft**: rank numbers on listing pages.
+- **Sort stories**: a "sort: …" dropdown above the story list lets you reorder by `default` (HN's ranking), `time` (newest first), `score`, or `comments/score ratio` (a rough proxy for "most-discussed given its score"). Reset by reloading the page, or click `reverse` to flip the current order.
+- **Linkify user about**: on a `/user` profile, plain-text URLs and email addresses in the about field are converted to clickable links.
 
 The legibility and quote/downvote restyling are adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
 
@@ -29,6 +31,7 @@ The comment tree itself gets a few tweaks for skim-ability:
 
 - **Hover any username** to see a popup with their account age, karma, and (if any) about-text snippet — works on every HN page that shows usernames, and reuses the same 6h cache as the inline (age, karma) blurb on item pages so repeat hovers are free.
 - **Hover any link to another HN item** inside a comment to see a popup with the item's title, domain, author, score, comment count, and (for Ask/Show items) a snippet of the body text. Useful when a commenter cites another submission and you want context without leaving the page.
+- **Reply / edit / delete inline**: clicking those links on any comment fetches the relevant form in the background and injects it into the comment, so you can write a reply without leaving the page. If you select text before clicking reply, the selection is automatically prepended to the textarea as a `> ` quoted block. Click the link a second time to hide the form.
 - **Click anywhere on the indent gutter to collapse a comment** — no more hunting for the small `[-]` link.
 - **`[collapse root]`** link in every nested comment's header that collapses the whole top-level thread it belongs to and scrolls back to the (now-collapsed) root, so you can dismiss an entire branch and pick up where you left off without losing your place.
 - **`toggle all`** link in the item's subtext that collapses or expands every top-level comment in one click — handy when you want to scan headers on a long thread.
