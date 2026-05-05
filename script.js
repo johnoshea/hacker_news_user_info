@@ -11,6 +11,7 @@
 // @grant        GM_addStyle
 // @grant        GM_listValues
 // @grant        GM_addValueChangeListener
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=ycombinator.com
 // ==/UserScript==
 
 // =============================================================================
