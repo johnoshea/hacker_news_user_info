@@ -9,8 +9,10 @@ A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 1. **Site-wide legibility layer** (every HN page, `news.ycombinator.com/*`): font reset, sizing, gutters, full-width main, downvoted-comment restyling (black-on-faint-grey), quoted-text rendering (`>`-prefixed text wrapped in `<p class="quote">` with HN-orange accents), and `.rank` hidden. CSS comes from a `:root` block with `--colour-hn-orange`, `--colour-hn-orange-pale`, `--gutter`, and `--border-radius` tokens. Adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
 2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, "toggle all" link on the fatitem subtext, backtick-wrapped text rendered as `<code>`, highlight for comments new since last visit, hover-on-cited-item popup, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, and a "show comment box" toggle that collapses the page-bottom comment-submit form.
 3. **Hover-on-username popup** runs on every HN page (except `/user`, where you're already looking at the profile): hovering any `.hnuser` for the dwell period (250ms) shows a popup with their account age, karma, and about-text snippet, fetched once and cached for 6h.
+4. **Listing-page enhancements** (any page with a `table.itemlist`): a "sort: …" dropdown re-orders the story list in place — `default` / `time` / `score` / `ratio`, plus a `reverse` link.
+5. **`/user` page enhancement**: plain-text URLs and email addresses in the about cell get turned into clickable links.
 
-`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`) and `setupUserInfoHover` on every HN page, and the enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `setupItemInfoHover`, `toolbar.mount`) only on item pages.
+`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`), `setupUserInfoHover`, `setupLinkifyUserAbout`, and `setupSortStories` on every HN page (each feature internally checks whether its page is the right one). The enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `setupItemInfoHover`, `setupReplyInline`, `toolbar.mount`) run only on item pages.
 
 ## Commands
 
@@ -31,7 +33,8 @@ src/
   parsing.js                 Pure helpers: timeSince, stripLeadingQuoteMarker, parseTagInput,
                              findCommentRootIndices, splitBackticks,
                              findNewCommentIds, isReadCommentEntryFresh,
-                             pruneExpiredReadComments, truncateText, extractDomain
+                             pruneExpiredReadComments, truncateText, extractDomain,
+                             linkifySegments, sortStoriesBy
   state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
   dom.js                     h() factory, findCommentParent, isItemPage
@@ -54,6 +57,12 @@ src/
     user-info-hover.js       setupUserInfoHover: hover any .hnuser for an account-info popup
     item-info-hover.js       setupItemInfoHover: hover an /item?id= link inside .commtext
                              for the cited item's title/score/author/comment-count preview
+    linkify-user-about.js    setupLinkifyUserAbout: on /user pages, replaces plain-text
+                             URLs / emails in the about cell with clickable <a> elements
+    sort-stories.js          setupSortStories: dropdown above table.itemlist on listing
+                             pages — sorts by default / time / score / ratio + reverse
+    reply-inline.js          setupReplyInline: makes reply/edit/delete links inject the
+                             relevant HN form into the comment instead of navigating away
     user-render.js           createUserRender factory: renderAllUsernames + per-user rerender
                              (also adds the .hn-op class + " [op]" marker on OP's comments)
     tag-manager.js           createTagManager factory: overlay state machine
