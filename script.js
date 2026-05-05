@@ -2320,7 +2320,7 @@ function isClickModified(event) {
 	);
 }
 
-function attachActionLink(comment, link, replyDiv, state) {
+function attachActionLink(link, replyDiv, state) {
 	const originalText = link.textContent;
 
 	link.addEventListener("click", async (event) => {
@@ -2397,7 +2397,7 @@ function setupReplyInline() {
 
 		for (const action of ["reply", "edit", "delete-confirm"]) {
 			const link = comment.querySelector(`a[href^="${action}"]`);
-			if (link) attachActionLink(comment, link, replyDiv, state);
+			if (link) attachActionLink(link, replyDiv, state);
 		}
 	}
 }
