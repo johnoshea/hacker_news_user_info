@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.5
+// @version      0.6
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -65,6 +65,26 @@ function timeSince(createdUnixSeconds, nowUnixSeconds) {
 function stripLeadingQuoteMarker(text) {
 	if (typeof text !== "string") return "";
 	return text.replace(/^\s*>\s*/, "").trim();
+}
+
+// For an item page's comment list (top-down DOM order), return for each
+// comment the index of its current root (a top-level comment with indent
+// level 0), or -1 if the comment is itself a root.
+//
+// Used by collapse-root-comment to inject a "[collapse root]" link on
+// every non-root comment that points at the right root toggle.
+function findCommentRootIndices(indentLevels) {
+	const out = new Array(indentLevels.length);
+	let currentRoot = -1;
+	for (let i = 0; i < indentLevels.length; i++) {
+		if (indentLevels[i] === 0) {
+			currentRoot = i;
+			out[i] = -1; // a root has no parent root to collapse to
+		} else {
+			out[i] = currentRoot;
+		}
+	}
+	return out;
 }
 
 // Parse a raw comma-separated tag string into a canonical list: each name
@@ -886,6 +906,57 @@ const STYLES = `
       border-color: var(--colour-hn-orange);
     }
     .hn-tagmgr-btn:hover { filter: brightness(0.95); }
+
+    /* Refined-HN-derived comment-tree tweaks (PR-2). HN's site-wide CSS
+       sets .commtext.cdd to grey-on-grey for dead comments; we recolour
+       it to a faint red so showdead users can spot them at a glance.
+       The indent border puts a 1px shadow on the indent gutter so reply
+       depth is visible without counting indents. <pre> and inline
+       <code> get a subtle grey background to look like code, matching
+       how most readers expect monospace text to render. */
+    .commtext.cdd,
+    .commtext.cdd * {
+      color: #d89899 !important;
+    }
+    tr.comtr td.ind {
+      box-shadow: inset -1px 0 #ccc;
+    }
+    .hn-clickable-indent {
+      cursor: pointer;
+    }
+    .hn-clickable-indent:hover {
+      box-shadow: inset -1px 0 #888;
+    }
+    div.comment span.commtext pre,
+    div.comment span.commtext *:not(pre) > code {
+      background: #e4e4e4;
+      border-radius: var(--border-radius);
+    }
+    div.comment span.commtext *:not(pre) > code {
+      padding: 0 4px;
+      display: inline-block;
+    }
+
+    /* OP highlight: the [op] suffix is appended as a text node by
+       user-render so the marker is grep-able in the DOM, and the
+       .hn-op class colours the whole username (including the suffix)
+       in HN orange. */
+    .hn-op {
+      color: var(--colour-hn-orange) !important;
+    }
+
+    /* The collapse-root link sits inline next to "parent | next" in the
+       comhead. Match HN's existing comhead link size so it doesn't
+       overpower the row. */
+    a.hn-collapse-root,
+    a.hn-collapse-root:link,
+    a.hn-collapse-root:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-collapse-root:hover {
+      text-decoration: underline;
+    }
   `;
 
 
@@ -1034,6 +1105,76 @@ function setupCommentBoxToggle() {
 
 	addComment.parentNode.insertBefore(showRow, addComment);
 	commentForm.append(hideLink);
+}
+
+
+// ===== src/features/click-indent-toggle.js =====
+
+// Make the empty indent column on each comment a click target that fires
+// HN's native toggle (collapse/expand). Cheap to add, big quality-of-life
+// win on long threads — there's a lot of indent gutter to click.
+function setupClickIndentToggle() {
+	for (const row of document.querySelectorAll("tr.comtr")) {
+		const indentCell = row.querySelector("td.ind");
+		const toggleBtn = row.querySelector("a.togg");
+		if (!indentCell || !toggleBtn) continue;
+		indentCell.classList.add("hn-clickable-indent");
+		indentCell.addEventListener("click", () => {
+			toggleBtn.click();
+		});
+	}
+}
+
+
+// ===== src/features/collapse-root-comment.js =====
+
+// On each non-root comment, append a "[collapse root]" link to the
+// comhead. Clicking it fires the root comment's native toggle and
+// scrolls the page back to the (now-collapsed) root, so a reader who
+// has descended deep into a thread can dismiss the whole subtree
+// without losing their place in the page.
+function setupCollapseRootComment() {
+	const comments = Array.from(document.querySelectorAll("tr.comtr"));
+	if (comments.length === 0) return;
+
+	// HN renders indentation as an <img> in td.ind whose width is
+	// `40 * level` pixels. We read that width once per comment to build
+	// the level array, then hand it to the pure helper.
+	const indentLevels = comments.map((row) => {
+		const img = row.querySelector("td.ind img");
+		if (!img) return 0;
+		const width = Number(img.getAttribute("width")) || img.width || 0;
+		return Math.round(width / 40);
+	});
+
+	const rootIndices = findCommentRootIndices(indentLevels);
+
+	for (let i = 0; i < comments.length; i++) {
+		const rootIdx = rootIndices[i];
+		if (rootIdx === -1) continue;
+		const root = comments[rootIdx];
+		const head = comments[i].querySelector("span.comhead");
+		if (!head) continue;
+
+		const link = h("a", {
+			class: "hn-collapse-root",
+			href: "javascript:void(0)",
+			text: "[collapse root]",
+			onclick: (e) => {
+				e.preventDefault();
+				const rootToggle = root.querySelector("a.togg");
+				if (!rootToggle) return;
+				rootToggle.click();
+				// Scroll the (now collapsed) root into view so the reader
+				// doesn't lose their place after the subtree disappears.
+				const rect = root.getBoundingClientRect();
+				const top = rect.top + window.scrollY;
+				window.scrollTo({ top, left: 0 });
+			},
+		});
+
+		head.append(link);
+	}
 }
 
 
@@ -1275,6 +1416,13 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 	// slow or hung request can't block the rest of the page.
 	function renderAllUsernames() {
 		const usernameElements = Array.from(document.querySelectorAll(".hnuser"));
+		// The OP's username appears in .fatitem above the comments and again
+		// on every comment they author within the thread. Reading it once
+		// here lets us tag every comment-row authorship below as [op] without
+		// also marking the fatitem's own hnuser (which is redundantly the OP
+		// — we already know they posted the item).
+		const itemAuthor =
+			document.querySelector(".fatitem .hnuser")?.textContent || null;
 
 		for (const usernameEl of usernameElements) {
 			const username = usernameEl.textContent;
@@ -1287,6 +1435,12 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 
 			const usernameClone = usernameEl.cloneNode(true);
 			usernameClone.className = `${usernameClone.className} hn-username`.trim();
+
+			const isCommentAuthor = !!usernameEl.closest("tr.comtr");
+			if (isCommentAuthor && itemAuthor && username === itemAuthor) {
+				usernameClone.classList.add("hn-op");
+				usernameClone.appendChild(document.createTextNode(" [op]"));
+			}
 
 			const infoSlot = h("span", {
 				class: "hn-info hn-info-pending",
@@ -1824,6 +1978,8 @@ function createToolbar({ store, backend }) {
 
 
 
+
+
 GM_addStyle(STYLES);
 
 // Adapter from GM_* to the {get, set, list} interface the store and
@@ -1876,6 +2032,8 @@ transformQuotes();
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
+	setupClickIndentToggle();
+	setupCollapseRootComment();
 	userRender.renderAllUsernames();
 	toolbar.mount();
 }
