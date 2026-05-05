@@ -29,7 +29,10 @@ The comment tree itself gets a few tweaks for skim-ability:
 
 - **Click anywhere on the indent gutter to collapse a comment** — no more hunting for the small `[-]` link.
 - **`[collapse root]`** link in every nested comment's header that collapses the whole top-level thread it belongs to and scrolls back to the (now-collapsed) root, so you can dismiss an entire branch and pick up where you left off without losing your place.
+- **`toggle all`** link in the item's subtext that collapses or expands every top-level comment in one click — handy when you want to scan headers on a long thread.
 - **Visible indentation gutter** with a thin separator on the left of each indent column, making reply depth easier to follow than counting indents.
+- **Highlighted unread comments**: comments that weren't on the page the last time you visited the same thread get a faint orange tint in their indent gutter. The "seen" list is per-item with a 3-day TTL.
+- **Backtick → monospace**: text wrapped in `` ` ``backticks`` ` `` inside a comment is rendered as inline `<code>` so code-in-prose looks like code without the author having to use raw HTML.
 - **Dead-comment recolour**: dead comments shown via HN's `showdead` setting get a faint red colour instead of HN's grey-on-grey.
 - **Inline `<code>` and `<pre>` blocks** get a subtle grey background and rounded corners so monospace text inside comments actually looks like code.
 
