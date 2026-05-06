@@ -9,12 +9,36 @@
 // Mirrors the build approach used by ../url_destination_checker so the two
 // repos stay structurally consistent.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..");
+
+// Embed the current commit's short hash in @version so a glance at the
+// userscript metadata in Tampermonkey/Violentmonkey is enough to tell
+// which commit is loaded. Base version is bumped manually for releases;
+// the hash is the per-commit fingerprint. Falls back to "unknown" if git
+// isn't available (shouldn't happen during normal use, but the build
+// shouldn't crash on it). execFileSync (not execSync) so no shell is
+// involved — args are hardcoded, but the no-shell habit is cheap.
+function gitShortHash() {
+	try {
+		return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+			cwd: repoRoot,
+			stdio: ["ignore", "pipe", "ignore"],
+		})
+			.toString()
+			.trim();
+	} catch (_e) {
+		return "unknown";
+	}
+}
+
+const BASE_VERSION = "0.10";
+const VERSION = `${BASE_VERSION}+${gitShortHash()}`;
 
 // Order matters: dependencies first.
 const SOURCES = [
@@ -46,7 +70,7 @@ const SOURCES = [
 const HEADER = `// ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.9
+// @version      ${VERSION}
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
