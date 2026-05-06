@@ -31,6 +31,10 @@ jobs:
       - name: Verify script.js is up to date with src/
         # Catches PRs that change src/ but forget to rebuild. Users install the
         # built artifact, so a stale script.js means features silently don't ship.
+        # The @version line embeds the current commit's short hash, which on CI
+        # is typically the merge commit and therefore differs from whatever HEAD
+        # was when the developer ran `just build` locally. `-I` excludes hunks
+        # that consist entirely of @version-line changes.
         run: |
           node scripts/build.js
-          git diff --exit-code script.js
+          git diff --exit-code -I '^// @version' script.js

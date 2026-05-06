@@ -9,12 +9,20 @@
 // comments are new.
 //
 // Subsequent visits: ids in the current page that weren't in the
-// stored entry get a .hn-new-comment class on their td.ind cell.
+// stored entry get a .hn-new-comment class on their tr.comtr row.
+// (The class lives on the row, not on td.ind, because the indent cell
+// has ~0 width on root-level comments — anything painted on it would
+// be invisible there.)
 
 import { READ_COMMENTS_TTL_MS } from "../config.js";
 import { findNewCommentIds } from "../parsing.js";
 
-function getItemId() {
+// Read the item id from the current page's URL. Distinct from
+// item-info-hover's same-purpose helper, which reads from a hovered
+// link's href. The build concatenates every module into one IIFE, so
+// function names must be unique across src/features/*.js — same-name
+// declarations would silently override each other.
+function getCurrentItemIdFromUrl() {
 	const params = new URLSearchParams(window.location.search);
 	return params.get("id") || null;
 }
@@ -26,7 +34,7 @@ function getCurrentCommentIds() {
 }
 
 export function setupHighlightUnreadComments({ store }) {
-	const itemId = getItemId();
+	const itemId = getCurrentItemIdFromUrl();
 	if (!itemId) return;
 
 	const now = Date.now();
@@ -45,8 +53,8 @@ export function setupHighlightUnreadComments({ store }) {
 	if (isFreshSecondVisit) {
 		const newIds = findNewCommentIds(currentIds, stored.ids);
 		for (const id of newIds) {
-			const indent = document.getElementById(id)?.querySelector("td.ind");
-			if (indent) indent.classList.add("hn-new-comment");
+			const row = document.getElementById(id);
+			if (row) row.classList.add("hn-new-comment");
 		}
 	}
 

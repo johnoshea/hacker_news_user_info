@@ -13,7 +13,10 @@ import { extractDomain, timeSince, truncateText } from "../parsing.js";
 
 const TEXT_PREVIEW_MAX = 280;
 
-function getItemId(link) {
+// Distinct from highlight-unread's URL-based helper. The build flattens
+// every module into one IIFE, so two same-name function declarations
+// would silently override each other.
+function getItemIdFromLinkHref(link) {
 	try {
 		const url = new URL(link.href);
 		return url.searchParams.get("id") || null;
@@ -66,7 +69,7 @@ function renderItemPopup(digest) {
 export function setupItemInfoHover({ fetchItem, popup }) {
 	const links = document.querySelectorAll(".commtext a[href*='/item?id=']");
 	for (const link of links) {
-		const id = getItemId(link);
+		const id = getItemIdFromLinkHref(link);
 		if (!id) continue;
 		popup.attachDwell(
 			link,

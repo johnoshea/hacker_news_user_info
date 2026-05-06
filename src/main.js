@@ -74,9 +74,6 @@ if (typeof GM_addValueChangeListener === "function") {
 
 applyDownvotedClass();
 transformQuotes();
-// User-info hover wires every .hnuser on every page (except /user
-// itself, which the feature checks internally).
-setupUserInfoHover({ fetchUser, popup: hoverPopup });
 // Linkify and sort-stories are page-gated internally (linkify by
 // pathname, sort by table.itemlist presence), so call unconditionally.
 setupLinkifyUserAbout();
@@ -94,3 +91,10 @@ if (isItemPage()) {
 	setupReplyInline();
 	toolbar.mount();
 }
+
+// User-info hover wires every .hnuser on every page (except /user
+// itself, which the feature checks internally). Must run AFTER
+// renderAllUsernames on item pages: that pass hides each original
+// .hnuser and inserts a visible clone, so the hover handler has to
+// land on the clone.
+setupUserInfoHover({ fetchUser, popup: hoverPopup });

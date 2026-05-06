@@ -103,6 +103,36 @@ test("store: everything lives under a single backend key", () => {
 	assert.equal(keys.length, 1, `expected 1 key, got: ${keys.join(",")}`);
 });
 
+// Two stores backed by the same backend simulate two browser tabs
+// writing to the same GM storage key. The pre-RMW design clobbered
+// the second tab's earlier-loaded snapshot over the first tab's
+// write — this is the bug that wiped out readComments at page load
+// when the user cmd-clicked many comment pages from the front page
+// at once. With read-modify-write, the second tab re-reads disk
+// before applying its mutation, so both writes survive.
+test("store: concurrent setReadComments from two stores both persist", () => {
+	const backend = makeFakeBackend();
+	const tabA = createStore(backend);
+	const tabB = createStore(backend);
+
+	// Force both stores to materialize an initial empty snapshot, the way
+	// page-load reads (e.g. hydrating a user's existing tags) would.
+	tabA.getRating("noone");
+	tabB.getRating("noone");
+
+	// Tab A writes first.
+	tabA.setReadComments("48000001", ["a1", "a2"], 1000);
+	// Tab B's in-memory snapshot doesn't include Tab A's write, but RMW
+	// re-reads disk before mutating, so Tab A's entry is preserved.
+	tabB.setReadComments("48000002", ["b1"], 2000);
+
+	const persisted = JSON.parse(backend.data.hn_state);
+	assert.deepEqual(persisted.readComments, {
+		48000001: { ids: ["a1", "a2"], fetchedAt: 1000 },
+		48000002: { ids: ["b1"], fetchedAt: 2000 },
+	});
+});
+
 // Single-shot replacement of the tags and colors slices. Must leave
 // ratings and cache untouched and must produce exactly one backend
 // write, so cross-tab listeners fire once per user Save action.

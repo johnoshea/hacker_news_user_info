@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.9
+// @version      0.10+864b47b
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -315,29 +315,50 @@ function emptyState() {
 }
 
 // Factory over a { get(key), set(key, value) } backend. Loads the consolidated
-// state on first access and writes the whole blob back on each mutation.
-// Writes are cheap because the blob is small (a few KB even for heavy users).
+// state on first access; mutations are read-modify-write (re-read disk, apply
+// the mutation, write back) so writes from other tabs that landed since the
+// last read are absorbed instead of clobbered. The pre-RMW design was racy:
+// at page load every tab the user had cmd-clicked open from the front page
+// would call setReadComments synchronously with a stale in-memory snapshot,
+// and the last writer's snapshot wiped everyone else's entry. The cross-tab
+// listener can't fix that after the fact — it only invalidates the in-memory
+// cache, it doesn't merge in-flight writes.
 function createStore(backend) {
 	let state = null;
 
-	const load = () => {
-		if (state !== null) return state;
+	const readDisk = () => {
 		const raw = backend.get(STATE_KEY);
 		if (raw === undefined || raw === null || raw === "") {
-			state = emptyState();
-		} else {
-			try {
-				const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-				state = { ...emptyState(), ...parsed };
-			} catch (_err) {
-				state = emptyState();
-			}
+			return emptyState();
 		}
+		try {
+			const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+			return { ...emptyState(), ...parsed };
+		} catch (_err) {
+			return emptyState();
+		}
+	};
+
+	const load = () => {
+		if (state !== null) return state;
+		state = readDisk();
 		return state;
 	};
 
-	const save = () => {
-		backend.set(STATE_KEY, JSON.stringify(state));
+	// Apply a mutation against the latest disk state. The mutator runs on
+	// a fresh read of the blob, then we write the whole thing back; this
+	// absorbs concurrent writes from other tabs as long as our get-then-set
+	// pair isn't preempted (GM_getValue and GM_setValue are synchronous in
+	// Tampermonkey/Violentmonkey, so the race window is essentially zero
+	// per call site). The mutator may return `false` to signal "no change,
+	// don't write" — used by pruneReadComments when nothing's stale.
+	const mutate = (mutator) => {
+		const fresh = readDisk();
+		const result = mutator(fresh);
+		if (result !== false) {
+			backend.set(STATE_KEY, JSON.stringify(fresh));
+		}
+		state = fresh;
 	};
 
 	const hydrateTag = (tagName) => {
@@ -357,33 +378,39 @@ function createStore(backend) {
 			return load().ratings[username] || 0;
 		},
 		setRating(username, rating) {
-			load().ratings[username] = rating;
-			save();
+			mutate((s) => {
+				s.ratings[username] = rating;
+			});
 		},
 		getUserTags(username) {
 			const names = load().tags[username] || [];
 			return names.map(hydrateTag);
 		},
 		setUserTags(username, tags) {
-			const s = load();
-			s.tags[username] = tags.map((t) => t.value);
-			// Record any color info that came along with the tag. If a tag already
-			// has a color, a caller-supplied color overrides it (setTagColor is the
-			// explicit "update the shared color" operation; passing a color here
-			// is how new tags get their initial color).
-			for (const t of tags) {
-				if (t.bgColor && t.textColor) {
-					s.colors[t.value] = { bgColor: t.bgColor, textColor: t.textColor };
+			mutate((s) => {
+				s.tags[username] = tags.map((t) => t.value);
+				// Record any color info that came along with the tag. If a tag
+				// already has a color, a caller-supplied color overrides it
+				// (setTagColor is the explicit "update the shared color"
+				// operation; passing a color here is how new tags get their
+				// initial color).
+				for (const t of tags) {
+					if (t.bgColor && t.textColor) {
+						s.colors[t.value] = {
+							bgColor: t.bgColor,
+							textColor: t.textColor,
+						};
+					}
 				}
-			}
-			save();
+			});
 		},
 		getTagColor(tagName) {
 			return load().colors[tagName] || null;
 		},
 		setTagColor(tagName, { bgColor, textColor }) {
-			load().colors[tagName] = { bgColor, textColor };
-			save();
+			mutate((s) => {
+				s.colors[tagName] = { bgColor, textColor };
+			});
 		},
 		// User-data cache. The `now` and `ttlMs` arguments are injected so tests
 		// can control time without mocking the clock. The browser call site
@@ -398,8 +425,9 @@ function createStore(backend) {
 			return rest;
 		},
 		setCachedUser(username, data, nowMs) {
-			load().cache[username] = { ...data, fetchedAt: nowMs };
-			save();
+			mutate((s) => {
+				s.cache[username] = { ...data, fetchedAt: nowMs };
+			});
 		},
 		// Item-info cache for the hover-panel feature. Stores a digest
 		// (title/url/by/score/descendants/time/text/type) of items the
@@ -413,10 +441,9 @@ function createStore(backend) {
 			return digest;
 		},
 		setCachedItem(itemId, digest, nowMs) {
-			const s = load();
-			if (!s.itemCache) s.itemCache = {};
-			s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
-			save();
+			mutate((s) => {
+				s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
+			});
 		},
 
 		// Read-comments cache for highlight-unread. Returns the stored
@@ -435,34 +462,36 @@ function createStore(backend) {
 		// (We replace, since a comment that's no longer on the page must
 		// have been deleted/flagged, and there's no value in tracking it.)
 		setReadComments(itemId, ids, nowMs) {
-			const s = load();
-			if (!s.readComments) s.readComments = {};
-			s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
-			save();
+			mutate((s) => {
+				s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
+			});
 		},
 		// Drop expired entries from the readComments map. Run on every
 		// item-page load so a user who reads-then-never-revisits doesn't
 		// accumulate dead entries forever.
 		pruneReadComments(nowMs, ttlMs) {
-			const s = load();
-			const before = s.readComments || {};
-			const after = pruneExpiredReadComments(before, nowMs, ttlMs);
-			if (Object.keys(after).length === Object.keys(before).length) return;
-			s.readComments = after;
-			save();
+			mutate((s) => {
+				const before = s.readComments;
+				const after = pruneExpiredReadComments(before, nowMs, ttlMs);
+				if (Object.keys(after).length === Object.keys(before).length) {
+					return false;
+				}
+				s.readComments = after;
+			});
 		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
-			const s = load();
-			s.tags = tagsByUser;
-			s.colors = colorsByTag;
-			save();
+			mutate((s) => {
+				s.tags = tagsByUser;
+				s.colors = colorsByTag;
+			});
 		},
 		// Expose raw state for export and for callers that need to iterate.
 		_snapshot() {
 			return load();
 		},
 		// Drop the in-memory cache so the next read reloads from the backend.
-		// Used when another tab writes to the same key.
+		// Used when another tab writes to the same key. Mutations don't need
+		// this because they always re-read disk before writing.
 		_invalidate() {
 			state = null;
 		},
@@ -1207,11 +1236,12 @@ const STYLES = `
       text-decoration: underline;
     }
 
-    /* PR-3 additions. Highlight-unread paints the indent gutter with a
-       faint orange tint instead of a box-shadow so it doesn't fight the
-       PR-2 hover/gutter shadows on td.ind (multi-shadow gets fiddly). */
-    .hn-new-comment {
-      background-color: rgba(255, 102, 0, 0.18);
+    /* Highlight-unread tints every cell of a new comment's row so the
+       marker stays visible regardless of indent depth. (Painting only
+       td.ind leaves root comments unmarked because their indent cell
+       collapses to ~0 width.) */
+    .hn-new-comment > td {
+      background-color: rgba(255, 102, 0, 0.12);
     }
 
     /* "[toggle all]" sits next to the existing fatitem subtext links;
@@ -1735,11 +1765,19 @@ function setupToggleAllComments() {
 // comments are new.
 //
 // Subsequent visits: ids in the current page that weren't in the
-// stored entry get a .hn-new-comment class on their td.ind cell.
+// stored entry get a .hn-new-comment class on their tr.comtr row.
+// (The class lives on the row, not on td.ind, because the indent cell
+// has ~0 width on root-level comments — anything painted on it would
+// be invisible there.)
 
 
 
-function getItemId() {
+// Read the item id from the current page's URL. Distinct from
+// item-info-hover's same-purpose helper, which reads from a hovered
+// link's href. The build concatenates every module into one IIFE, so
+// function names must be unique across src/features/*.js — same-name
+// declarations would silently override each other.
+function getCurrentItemIdFromUrl() {
 	const params = new URLSearchParams(window.location.search);
 	return params.get("id") || null;
 }
@@ -1750,7 +1788,7 @@ function getCurrentCommentIds() {
 		.filter(Boolean);
 }
 function setupHighlightUnreadComments({ store }) {
-	const itemId = getItemId();
+	const itemId = getCurrentItemIdFromUrl();
 	if (!itemId) return;
 
 	const now = Date.now();
@@ -1769,8 +1807,8 @@ function setupHighlightUnreadComments({ store }) {
 	if (isFreshSecondVisit) {
 		const newIds = findNewCommentIds(currentIds, stored.ids);
 		for (const id of newIds) {
-			const indent = document.getElementById(id)?.querySelector("td.ind");
-			if (indent) indent.classList.add("hn-new-comment");
+			const row = document.getElementById(id);
+			if (row) row.classList.add("hn-new-comment");
 		}
 	}
 
@@ -1876,11 +1914,15 @@ function createHoverPopup() {
 // with item-info-hover, and the user-data cache with renderAllUsernames
 // — repeat hovers cost zero requests.
 //
-// Skips:
-//   - The /user page itself (you're already looking at the profile)
-//   - The .hnuser inside .hn-main-row (our own injected username clone
-//     in renderAllUsernames; hovering that would create a duplicate
-//     "(N years old, KKK karma)" experience next to the inline blurb)
+// Skipped on the /user page itself (you're already looking at the
+// profile).
+//
+// On item pages, renderAllUsernames hides each original .hnuser and
+// inserts a visible clone inside .hn-main-row — so this pass must run
+// after renderAllUsernames, and we attach to every .hnuser we find.
+// Handlers on the hidden originals never fire (display:none = no mouse
+// events); the visible clones do, and the popup adds the about-text
+// snippet that the inline (age, karma) blurb doesn't show.
 
 
 
@@ -1921,9 +1963,6 @@ function renderUserPopup(username, data) {
 function setupUserInfoHover({ fetchUser, popup }) {
 	if (isOnUserPage()) return;
 	for (const link of document.querySelectorAll("a.hnuser")) {
-		// Skip our own injected clone inside .hn-main-row — it lives next
-		// to the inline (age, karma) blurb so the popup would be redundant.
-		if (link.closest(".hn-main-row")) continue;
 		const username = link.textContent;
 		if (!username) continue;
 		popup.attachDwell(
@@ -1951,7 +1990,10 @@ function setupUserInfoHover({ fetchUser, popup }) {
 
 const TEXT_PREVIEW_MAX = 280;
 
-function getItemId(link) {
+// Distinct from highlight-unread's URL-based helper. The build flattens
+// every module into one IIFE, so two same-name function declarations
+// would silently override each other.
+function getItemIdFromLinkHref(link) {
 	try {
 		const url = new URL(link.href);
 		return url.searchParams.get("id") || null;
@@ -2003,7 +2045,7 @@ function renderItemPopup(digest) {
 function setupItemInfoHover({ fetchItem, popup }) {
 	const links = document.querySelectorAll(".commtext a[href*='/item?id=']");
 	for (const link of links) {
-		const id = getItemId(link);
+		const id = getItemIdFromLinkHref(link);
 		if (!id) continue;
 		popup.attachDwell(
 			link,
@@ -3264,9 +3306,6 @@ if (typeof GM_addValueChangeListener === "function") {
 
 applyDownvotedClass();
 transformQuotes();
-// User-info hover wires every .hnuser on every page (except /user
-// itself, which the feature checks internally).
-setupUserInfoHover({ fetchUser, popup: hoverPopup });
 // Linkify and sort-stories are page-gated internally (linkify by
 // pathname, sort by table.itemlist presence), so call unconditionally.
 setupLinkifyUserAbout();
@@ -3284,6 +3323,13 @@ if (isItemPage()) {
 	setupReplyInline();
 	toolbar.mount();
 }
+
+// User-info hover wires every .hnuser on every page (except /user
+// itself, which the feature checks internally). Must run AFTER
+// renderAllUsernames on item pages: that pass hides each original
+// .hnuser and inserts a visible clone, so the hover handler has to
+// land on the clone.
+setupUserInfoHover({ fetchUser, popup: hoverPopup });
 
 
 })();
