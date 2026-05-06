@@ -9,7 +9,10 @@
 // comments are new.
 //
 // Subsequent visits: ids in the current page that weren't in the
-// stored entry get a .hn-new-comment class on their td.ind cell.
+// stored entry get a .hn-new-comment class on their tr.comtr row.
+// (The class lives on the row, not on td.ind, because the indent cell
+// has ~0 width on root-level comments — anything painted on it would
+// be invisible there.)
 
 import { READ_COMMENTS_TTL_MS } from "../config.js";
 import { findNewCommentIds } from "../parsing.js";
@@ -45,8 +48,8 @@ export function setupHighlightUnreadComments({ store }) {
 	if (isFreshSecondVisit) {
 		const newIds = findNewCommentIds(currentIds, stored.ids);
 		for (const id of newIds) {
-			const indent = document.getElementById(id)?.querySelector("td.ind");
-			if (indent) indent.classList.add("hn-new-comment");
+			const row = document.getElementById(id);
+			if (row) row.classList.add("hn-new-comment");
 		}
 	}
 

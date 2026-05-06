@@ -1207,11 +1207,12 @@ const STYLES = `
       text-decoration: underline;
     }
 
-    /* PR-3 additions. Highlight-unread paints the indent gutter with a
-       faint orange tint instead of a box-shadow so it doesn't fight the
-       PR-2 hover/gutter shadows on td.ind (multi-shadow gets fiddly). */
-    .hn-new-comment {
-      background-color: rgba(255, 102, 0, 0.18);
+    /* Highlight-unread tints every cell of a new comment's row so the
+       marker stays visible regardless of indent depth. (Painting only
+       td.ind leaves root comments unmarked because their indent cell
+       collapses to ~0 width.) */
+    .hn-new-comment > td {
+      background-color: rgba(255, 102, 0, 0.12);
     }
 
     /* "[toggle all]" sits next to the existing fatitem subtext links;
@@ -1735,7 +1736,10 @@ function setupToggleAllComments() {
 // comments are new.
 //
 // Subsequent visits: ids in the current page that weren't in the
-// stored entry get a .hn-new-comment class on their td.ind cell.
+// stored entry get a .hn-new-comment class on their tr.comtr row.
+// (The class lives on the row, not on td.ind, because the indent cell
+// has ~0 width on root-level comments — anything painted on it would
+// be invisible there.)
 
 
 
@@ -1769,8 +1773,8 @@ function setupHighlightUnreadComments({ store }) {
 	if (isFreshSecondVisit) {
 		const newIds = findNewCommentIds(currentIds, stored.ids);
 		for (const id of newIds) {
-			const indent = document.getElementById(id)?.querySelector("td.ind");
-			if (indent) indent.classList.add("hn-new-comment");
+			const row = document.getElementById(id);
+			if (row) row.classList.add("hn-new-comment");
 		}
 	}
 
@@ -1876,11 +1880,15 @@ function createHoverPopup() {
 // with item-info-hover, and the user-data cache with renderAllUsernames
 // — repeat hovers cost zero requests.
 //
-// Skips:
-//   - The /user page itself (you're already looking at the profile)
-//   - The .hnuser inside .hn-main-row (our own injected username clone
-//     in renderAllUsernames; hovering that would create a duplicate
-//     "(N years old, KKK karma)" experience next to the inline blurb)
+// Skipped on the /user page itself (you're already looking at the
+// profile).
+//
+// On item pages, renderAllUsernames hides each original .hnuser and
+// inserts a visible clone inside .hn-main-row — so this pass must run
+// after renderAllUsernames, and we attach to every .hnuser we find.
+// Handlers on the hidden originals never fire (display:none = no mouse
+// events); the visible clones do, and the popup adds the about-text
+// snippet that the inline (age, karma) blurb doesn't show.
 
 
 
@@ -1921,9 +1929,6 @@ function renderUserPopup(username, data) {
 function setupUserInfoHover({ fetchUser, popup }) {
 	if (isOnUserPage()) return;
 	for (const link of document.querySelectorAll("a.hnuser")) {
-		// Skip our own injected clone inside .hn-main-row — it lives next
-		// to the inline (age, karma) blurb so the popup would be redundant.
-		if (link.closest(".hn-main-row")) continue;
 		const username = link.textContent;
 		if (!username) continue;
 		popup.attachDwell(
@@ -3264,9 +3269,6 @@ if (typeof GM_addValueChangeListener === "function") {
 
 applyDownvotedClass();
 transformQuotes();
-// User-info hover wires every .hnuser on every page (except /user
-// itself, which the feature checks internally).
-setupUserInfoHover({ fetchUser, popup: hoverPopup });
 // Linkify and sort-stories are page-gated internally (linkify by
 // pathname, sort by table.itemlist presence), so call unconditionally.
 setupLinkifyUserAbout();
@@ -3284,6 +3286,13 @@ if (isItemPage()) {
 	setupReplyInline();
 	toolbar.mount();
 }
+
+// User-info hover wires every .hnuser on every page (except /user
+// itself, which the feature checks internally). Must run AFTER
+// renderAllUsernames on item pages: that pass hides each original
+// .hnuser and inserts a visible clone, so the hover handler has to
+// land on the clone.
+setupUserInfoHover({ fetchUser, popup: hoverPopup });
 
 
 })();

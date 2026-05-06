@@ -3,11 +3,15 @@
 // with item-info-hover, and the user-data cache with renderAllUsernames
 // — repeat hovers cost zero requests.
 //
-// Skips:
-//   - The /user page itself (you're already looking at the profile)
-//   - The .hnuser inside .hn-main-row (our own injected username clone
-//     in renderAllUsernames; hovering that would create a duplicate
-//     "(N years old, KKK karma)" experience next to the inline blurb)
+// Skipped on the /user page itself (you're already looking at the
+// profile).
+//
+// On item pages, renderAllUsernames hides each original .hnuser and
+// inserts a visible clone inside .hn-main-row — so this pass must run
+// after renderAllUsernames, and we attach to every .hnuser we find.
+// Handlers on the hidden originals never fire (display:none = no mouse
+// events); the visible clones do, and the popup adds the about-text
+// snippet that the inline (age, karma) blurb doesn't show.
 
 import { h } from "../dom.js";
 import { timeSince, truncateText } from "../parsing.js";
@@ -50,9 +54,6 @@ function renderUserPopup(username, data) {
 export function setupUserInfoHover({ fetchUser, popup }) {
 	if (isOnUserPage()) return;
 	for (const link of document.querySelectorAll("a.hnuser")) {
-		// Skip our own injected clone inside .hn-main-row — it lives next
-		// to the inline (age, karma) blurb so the popup would be redundant.
-		if (link.closest(".hn-main-row")) continue;
 		const username = link.textContent;
 		if (!username) continue;
 		popup.attachDwell(
