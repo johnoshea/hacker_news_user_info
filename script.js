@@ -315,29 +315,50 @@ function emptyState() {
 }
 
 // Factory over a { get(key), set(key, value) } backend. Loads the consolidated
-// state on first access and writes the whole blob back on each mutation.
-// Writes are cheap because the blob is small (a few KB even for heavy users).
+// state on first access; mutations are read-modify-write (re-read disk, apply
+// the mutation, write back) so writes from other tabs that landed since the
+// last read are absorbed instead of clobbered. The pre-RMW design was racy:
+// at page load every tab the user had cmd-clicked open from the front page
+// would call setReadComments synchronously with a stale in-memory snapshot,
+// and the last writer's snapshot wiped everyone else's entry. The cross-tab
+// listener can't fix that after the fact — it only invalidates the in-memory
+// cache, it doesn't merge in-flight writes.
 function createStore(backend) {
 	let state = null;
 
-	const load = () => {
-		if (state !== null) return state;
+	const readDisk = () => {
 		const raw = backend.get(STATE_KEY);
 		if (raw === undefined || raw === null || raw === "") {
-			state = emptyState();
-		} else {
-			try {
-				const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-				state = { ...emptyState(), ...parsed };
-			} catch (_err) {
-				state = emptyState();
-			}
+			return emptyState();
 		}
+		try {
+			const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+			return { ...emptyState(), ...parsed };
+		} catch (_err) {
+			return emptyState();
+		}
+	};
+
+	const load = () => {
+		if (state !== null) return state;
+		state = readDisk();
 		return state;
 	};
 
-	const save = () => {
-		backend.set(STATE_KEY, JSON.stringify(state));
+	// Apply a mutation against the latest disk state. The mutator runs on
+	// a fresh read of the blob, then we write the whole thing back; this
+	// absorbs concurrent writes from other tabs as long as our get-then-set
+	// pair isn't preempted (GM_getValue and GM_setValue are synchronous in
+	// Tampermonkey/Violentmonkey, so the race window is essentially zero
+	// per call site). The mutator may return `false` to signal "no change,
+	// don't write" — used by pruneReadComments when nothing's stale.
+	const mutate = (mutator) => {
+		const fresh = readDisk();
+		const result = mutator(fresh);
+		if (result !== false) {
+			backend.set(STATE_KEY, JSON.stringify(fresh));
+		}
+		state = fresh;
 	};
 
 	const hydrateTag = (tagName) => {
@@ -357,33 +378,39 @@ function createStore(backend) {
 			return load().ratings[username] || 0;
 		},
 		setRating(username, rating) {
-			load().ratings[username] = rating;
-			save();
+			mutate((s) => {
+				s.ratings[username] = rating;
+			});
 		},
 		getUserTags(username) {
 			const names = load().tags[username] || [];
 			return names.map(hydrateTag);
 		},
 		setUserTags(username, tags) {
-			const s = load();
-			s.tags[username] = tags.map((t) => t.value);
-			// Record any color info that came along with the tag. If a tag already
-			// has a color, a caller-supplied color overrides it (setTagColor is the
-			// explicit "update the shared color" operation; passing a color here
-			// is how new tags get their initial color).
-			for (const t of tags) {
-				if (t.bgColor && t.textColor) {
-					s.colors[t.value] = { bgColor: t.bgColor, textColor: t.textColor };
+			mutate((s) => {
+				s.tags[username] = tags.map((t) => t.value);
+				// Record any color info that came along with the tag. If a tag
+				// already has a color, a caller-supplied color overrides it
+				// (setTagColor is the explicit "update the shared color"
+				// operation; passing a color here is how new tags get their
+				// initial color).
+				for (const t of tags) {
+					if (t.bgColor && t.textColor) {
+						s.colors[t.value] = {
+							bgColor: t.bgColor,
+							textColor: t.textColor,
+						};
+					}
 				}
-			}
-			save();
+			});
 		},
 		getTagColor(tagName) {
 			return load().colors[tagName] || null;
 		},
 		setTagColor(tagName, { bgColor, textColor }) {
-			load().colors[tagName] = { bgColor, textColor };
-			save();
+			mutate((s) => {
+				s.colors[tagName] = { bgColor, textColor };
+			});
 		},
 		// User-data cache. The `now` and `ttlMs` arguments are injected so tests
 		// can control time without mocking the clock. The browser call site
@@ -398,8 +425,9 @@ function createStore(backend) {
 			return rest;
 		},
 		setCachedUser(username, data, nowMs) {
-			load().cache[username] = { ...data, fetchedAt: nowMs };
-			save();
+			mutate((s) => {
+				s.cache[username] = { ...data, fetchedAt: nowMs };
+			});
 		},
 		// Item-info cache for the hover-panel feature. Stores a digest
 		// (title/url/by/score/descendants/time/text/type) of items the
@@ -413,10 +441,9 @@ function createStore(backend) {
 			return digest;
 		},
 		setCachedItem(itemId, digest, nowMs) {
-			const s = load();
-			if (!s.itemCache) s.itemCache = {};
-			s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
-			save();
+			mutate((s) => {
+				s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
+			});
 		},
 
 		// Read-comments cache for highlight-unread. Returns the stored
@@ -435,34 +462,36 @@ function createStore(backend) {
 		// (We replace, since a comment that's no longer on the page must
 		// have been deleted/flagged, and there's no value in tracking it.)
 		setReadComments(itemId, ids, nowMs) {
-			const s = load();
-			if (!s.readComments) s.readComments = {};
-			s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
-			save();
+			mutate((s) => {
+				s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
+			});
 		},
 		// Drop expired entries from the readComments map. Run on every
 		// item-page load so a user who reads-then-never-revisits doesn't
 		// accumulate dead entries forever.
 		pruneReadComments(nowMs, ttlMs) {
-			const s = load();
-			const before = s.readComments || {};
-			const after = pruneExpiredReadComments(before, nowMs, ttlMs);
-			if (Object.keys(after).length === Object.keys(before).length) return;
-			s.readComments = after;
-			save();
+			mutate((s) => {
+				const before = s.readComments;
+				const after = pruneExpiredReadComments(before, nowMs, ttlMs);
+				if (Object.keys(after).length === Object.keys(before).length) {
+					return false;
+				}
+				s.readComments = after;
+			});
 		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
-			const s = load();
-			s.tags = tagsByUser;
-			s.colors = colorsByTag;
-			save();
+			mutate((s) => {
+				s.tags = tagsByUser;
+				s.colors = colorsByTag;
+			});
 		},
 		// Expose raw state for export and for callers that need to iterate.
 		_snapshot() {
 			return load();
 		},
 		// Drop the in-memory cache so the next read reloads from the backend.
-		// Used when another tab writes to the same key.
+		// Used when another tab writes to the same key. Mutations don't need
+		// this because they always re-read disk before writing.
 		_invalidate() {
 			state = null;
 		},

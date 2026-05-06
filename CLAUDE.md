@@ -104,7 +104,9 @@ All state lives under a single `hn_state` key (`STATE_KEY` in `src/config.js`) w
   colors:  { <tagName>: { bgColor, textColor } },
   cache:   { <user>: { created, karma, fetchedAt } } }
 ```
-Callers never touch `GM_setValue`/`GM_getValue` directly — they go through the `store` object returned by `createStore(backend)` in `src/state.js`, where `backend` is the `{ get, set, list }` adapter that `src/main.js` builds around the `GM_*` APIs. The store consolidates writes into one JSON blob; reads are cached in memory.
+Callers never touch `GM_setValue`/`GM_getValue` directly — they go through the `store` object returned by `createStore(backend)` in `src/state.js`, where `backend` is the `{ get, set, list }` adapter that `src/main.js` builds around the `GM_*` APIs. The store consolidates writes into one JSON blob and caches reads in memory.
+
+Mutations are read-modify-write: each setter re-reads the disk blob, applies its mutation, and writes the whole blob back. This is what makes the store safe when the user has multiple HN tabs open at once (the typical pattern of cmd-clicking comment pages from the front page) — every tab's `setupHighlightUnreadComments` fires synchronously at page load, and without RMW their stale-snapshot writes would clobber each other on the way to disk. RMW absorbs concurrent writes from other tabs as long as the get-then-set pair isn't preempted; `GM_getValue`/`GM_setValue` are synchronous in Tampermonkey and Violentmonkey, so the race window is essentially zero per call site. The cross-tab listener (below) handles the in-memory cache invalidation; RMW handles the persistence side.
 
 On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`hn_author_rating_*`, `hn_custom_tags_*`, `hn_custom_tag_color_*`) into the new format. Legacy keys are left in place for one version as a rollback safety net.
 
