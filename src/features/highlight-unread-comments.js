@@ -30,6 +30,7 @@ function getCurrentCommentIds() {
 
 export function setupHighlightUnreadComments({ store }) {
 	const itemId = getItemId();
+	console.log("[hn-debug] highlight-unread: entry", { itemId });
 	if (!itemId) return;
 
 	const now = Date.now();
@@ -39,11 +40,17 @@ export function setupHighlightUnreadComments({ store }) {
 	store.pruneReadComments(now, READ_COMMENTS_TTL_MS);
 
 	const currentIds = getCurrentCommentIds();
+	console.log("[hn-debug] highlight-unread: currentIds", currentIds.length);
 	if (currentIds.length === 0) return;
 
 	const stored = store.getReadComments(itemId);
 	const isFreshSecondVisit =
 		stored !== null && now - stored.fetchedAt <= READ_COMMENTS_TTL_MS;
+	console.log("[hn-debug] highlight-unread: stored", {
+		hasStored: stored !== null,
+		storedCount: stored?.ids?.length,
+		isFreshSecondVisit,
+	});
 
 	if (isFreshSecondVisit) {
 		const newIds = findNewCommentIds(currentIds, stored.ids);
@@ -55,5 +62,19 @@ export function setupHighlightUnreadComments({ store }) {
 
 	// Always update the stored snapshot to match what's currently on
 	// the page — next visit's "new" set is derived from this.
-	store.setReadComments(itemId, currentIds, now);
+	console.log("[hn-debug] highlight-unread: about to setReadComments", {
+		itemId,
+		count: currentIds.length,
+	});
+	try {
+		store.setReadComments(itemId, currentIds, now);
+		console.log("[hn-debug] highlight-unread: setReadComments returned");
+		const verify = store.getReadComments(itemId);
+		console.log("[hn-debug] highlight-unread: verify post-write", {
+			hasEntry: verify !== null,
+			count: verify?.ids?.length,
+		});
+	} catch (err) {
+		console.error("[hn-debug] highlight-unread: setReadComments threw", err);
+	}
 }
