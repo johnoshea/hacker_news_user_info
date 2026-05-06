@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.10+9112cd9
+// @version      0.10+864b47b
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -1772,7 +1772,12 @@ function setupToggleAllComments() {
 
 
 
-function getItemId() {
+// Read the item id from the current page's URL. Distinct from
+// item-info-hover's same-purpose helper, which reads from a hovered
+// link's href. The build concatenates every module into one IIFE, so
+// function names must be unique across src/features/*.js — same-name
+// declarations would silently override each other.
+function getCurrentItemIdFromUrl() {
 	const params = new URLSearchParams(window.location.search);
 	return params.get("id") || null;
 }
@@ -1783,8 +1788,7 @@ function getCurrentCommentIds() {
 		.filter(Boolean);
 }
 function setupHighlightUnreadComments({ store }) {
-	const itemId = getItemId();
-	console.log("[hn-debug] highlight-unread: entry", { itemId });
+	const itemId = getCurrentItemIdFromUrl();
 	if (!itemId) return;
 
 	const now = Date.now();
@@ -1794,17 +1798,11 @@ function setupHighlightUnreadComments({ store }) {
 	store.pruneReadComments(now, READ_COMMENTS_TTL_MS);
 
 	const currentIds = getCurrentCommentIds();
-	console.log("[hn-debug] highlight-unread: currentIds", currentIds.length);
 	if (currentIds.length === 0) return;
 
 	const stored = store.getReadComments(itemId);
 	const isFreshSecondVisit =
 		stored !== null && now - stored.fetchedAt <= READ_COMMENTS_TTL_MS;
-	console.log("[hn-debug] highlight-unread: stored", {
-		hasStored: stored !== null,
-		storedCount: stored?.ids?.length,
-		isFreshSecondVisit,
-	});
 
 	if (isFreshSecondVisit) {
 		const newIds = findNewCommentIds(currentIds, stored.ids);
@@ -1816,21 +1814,7 @@ function setupHighlightUnreadComments({ store }) {
 
 	// Always update the stored snapshot to match what's currently on
 	// the page — next visit's "new" set is derived from this.
-	console.log("[hn-debug] highlight-unread: about to setReadComments", {
-		itemId,
-		count: currentIds.length,
-	});
-	try {
-		store.setReadComments(itemId, currentIds, now);
-		console.log("[hn-debug] highlight-unread: setReadComments returned");
-		const verify = store.getReadComments(itemId);
-		console.log("[hn-debug] highlight-unread: verify post-write", {
-			hasEntry: verify !== null,
-			count: verify?.ids?.length,
-		});
-	} catch (err) {
-		console.error("[hn-debug] highlight-unread: setReadComments threw", err);
-	}
+	store.setReadComments(itemId, currentIds, now);
 }
 
 
@@ -2006,7 +1990,10 @@ function setupUserInfoHover({ fetchUser, popup }) {
 
 const TEXT_PREVIEW_MAX = 280;
 
-function getItemId(link) {
+// Distinct from highlight-unread's URL-based helper. The build flattens
+// every module into one IIFE, so two same-name function declarations
+// would silently override each other.
+function getItemIdFromLinkHref(link) {
 	try {
 		const url = new URL(link.href);
 		return url.searchParams.get("id") || null;
@@ -2058,7 +2045,7 @@ function renderItemPopup(digest) {
 function setupItemInfoHover({ fetchItem, popup }) {
 	const links = document.querySelectorAll(".commtext a[href*='/item?id=']");
 	for (const link of links) {
-		const id = getItemId(link);
+		const id = getItemIdFromLinkHref(link);
 		if (!id) continue;
 		popup.attachDwell(
 			link,

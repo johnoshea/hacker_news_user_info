@@ -97,12 +97,49 @@ function stripModuleSyntax(src) {
 	return out;
 }
 
+// Surface duplicate top-level `function name(...)` declarations across
+// modules. Each src/ file is its own ES module so collisions go unnoticed
+// in tests, but the build concatenates everything into one IIFE — same-name
+// function declarations silently override each other in that scope, and
+// the symptom (caller invokes a function with a wrong signature, gets
+// surprise behaviour) is hard to debug. A name-clash here happened once;
+// the next-best place to catch it is at build time.
+function checkForDuplicateTopLevelFunctions(modules) {
+	// Match `function foo(` at the start of a line so we only see top-level
+	// declarations, not nested ones inside a closure body. Stripping the
+	// `export ` prefix has already happened by the time we look.
+	const declRe = /^function\s+([A-Za-z_$][\w$]*)\s*\(/gm;
+	const seen = new Map(); // name -> [ relPath, ... ]
+	for (const { path, body } of modules) {
+		for (const m of body.matchAll(declRe)) {
+			const name = m[1];
+			if (!seen.has(name)) seen.set(name, []);
+			seen.get(name).push(path);
+		}
+	}
+	const collisions = [...seen.entries()].filter(
+		([, paths]) => paths.length > 1,
+	);
+	if (collisions.length === 0) return;
+	const lines = collisions.map(
+		([name, paths]) => `  ${name}: ${paths.join(", ")}`,
+	);
+	throw new Error(
+		`build: duplicate top-level function declarations across modules ` +
+			`(later definitions silently override earlier ones in the bundled IIFE):\n${lines.join("\n")}`,
+	);
+}
+
 function buildBody() {
+	const modules = SOURCES.map((rel) => ({
+		path: rel,
+		body: stripModuleSyntax(readFileSync(join(repoRoot, rel), "utf8")),
+	}));
+	checkForDuplicateTopLevelFunctions(modules);
 	const parts = [];
-	for (const rel of SOURCES) {
-		const src = readFileSync(join(repoRoot, rel), "utf8");
-		parts.push(`// ===== ${rel} =====`);
-		parts.push(stripModuleSyntax(src));
+	for (const { path, body } of modules) {
+		parts.push(`// ===== ${path} =====`);
+		parts.push(body);
 	}
 	return parts.join("\n\n");
 }

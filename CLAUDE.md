@@ -86,6 +86,10 @@ The repository is split into pure logic, browser-only code, and a build step tha
 
 `scripts/build.js` reads the files listed in its `SOURCES` array, in dependency order, strips ES module `import`/`export` declarations with regex (we only use the simple declaration forms), concatenates them with `// ===== <path> =====` separators, wraps the whole body in `(function () { "use strict"; … })()`, and prepends the `==UserScript==` header. The result is written to `script.js` at the repo root.
 
+Because every module ends up in one shared IIFE scope, top-level `function foo(...)` declarations from different modules collide silently — a later definition overrides an earlier one with the same name, and the symptom (a caller invoking a function with the wrong signature) is hard to debug from runtime alone. `scripts/build.js` runs `checkForDuplicateTopLevelFunctions` over the stripped sources before writing the bundle and fails the build if it finds a collision. **Function names must be unique across `src/features/*.js`.** Local helpers that conceptually overlap should be named explicitly for their input (e.g. `getCurrentItemIdFromUrl` vs `getItemIdFromLinkHref`).
+
+The `@version` field embeds the current commit's git short hash (`0.10+abc1234`) so the userscript metadata in Tampermonkey/Violentmonkey is enough to identify which commit is loaded. CI's "is `script.js` up to date" diff uses `git diff -I '^// @version'` to ignore hunks consisting entirely of @version-line changes, since the committed-script.js's hash and a fresh CI build's hash always differ by one commit.
+
 The pattern mirrors the sibling repo `url_destination_checker`. There is no bundler (no esbuild/rollup/webpack); the textual strip works because `src/` only uses `import { x } from "./y.js"` and `export function`/`export const`. If a contributor introduces a more exotic module pattern (`export *`, dynamic `import()`, `import` with side-effects only), the build script needs to grow.
 
 ### Pure-logic boundary
