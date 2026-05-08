@@ -223,3 +223,15 @@ export function parseTagInput(text) {
 	}
 	return out;
 }
+
+// True iff `latestKids` contains an id not present in `seenKids`. Used
+// by the watch-for-replies feature to decide whether a watched comment
+// has new replies that the user has not yet acknowledged. Both inputs
+// may be null/undefined (treated as empty).
+export function watchHasNewReplies(seenKids, latestKids) {
+	const seen = new Set(seenKids || []);
+	for (const id of latestKids || []) {
+		if (!seen.has(id)) return true;
+	}
+	return false;
+}
