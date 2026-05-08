@@ -26,6 +26,7 @@ Each commenter's username is augmented with:
 - **A tag input** where you can type comma-separated tags (e.g. `expert, javascript, helpful`). Each tag gets a random pastel color the first time you use it, and reuses the same color for every user you apply it to.
 - **A tag list** in the right column showing all tags you've applied to the commenter, each with inline edit and remove icons.
 - **Original-poster highlight**: every comment by the item's submitter gets a `[op]` suffix and HN-orange username so you can spot the OP's replies at a glance.
+- **Watch for replies**: toggle the 👁 icon on any comment to start watching it. On the next visit to a listing page (`/news`, `/newest`, etc.), the story's "n comments" link is bold orange with a `★` prefix when new direct replies have arrived since you started watching. On the comment page itself, watched comments are marked with an orange left border and faint yellow tint, and the toolbar grows `↑ watch` / `watch ↓` buttons that jump between watched comments on the page. Watches persist until you toggle them off, with a 14-day TTL backstop on cold threads.
 
 The comment tree itself gets a few tweaks for skim-ability:
 
@@ -64,6 +65,8 @@ A small draggable toolbar in the top-right corner has **Save state** and **Resto
 **Editing a tag.** Click the ✏️ icon on a tag to rename it. The change applies to every comment by that user on the page.
 
 **Removing a tag.** Click the ✖ icon on a tag to remove it from that user across all their comments on the page.
+
+**Watching for replies.** Click the 👁 icon next to any commenter's username (between the rating ▲▼ and the tag input) to flag the comment as one you'd like to know about future replies to. The icon switches to 👁‍🗨 and the comment row is highlighted. The next time you load `/news` (or any listing page) where that thread appears, the "n comments" link is highlighted with a `★` prefix if new direct replies have arrived. Click the comment page to acknowledge them; the highlight clears until more replies arrive.
 
 **Managing all tags.** Click the ☰ icon on any tag to open the tag manager overlay on the right-hand side of the page. It lists every tag you have ever created, sortable by name or by usage count and filterable by substring — the filter box is focused as soon as the overlay opens, so you can start typing immediately. From there you can rename a tag (press Enter to commit; renaming to a name that already exists prompts to merge), mark a tag for removal, or undo pending changes on a row. Click **Save** to apply everything at once, or **Cancel** / press **Escape** / click outside the overlay to discard your changes.
 
