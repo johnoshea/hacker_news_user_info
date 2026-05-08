@@ -77,6 +77,7 @@ test("stateToExport: produces normalized format consumable by parseImport", () =
 		users: {
 			alice: { rating: 2, tags: ["spammer"] },
 		},
+		watches: {},
 	});
 	// Round-trip.
 	const parsed = parseImport(exported);

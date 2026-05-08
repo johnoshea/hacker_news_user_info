@@ -37,7 +37,7 @@ function gitShortHash() {
 	}
 }
 
-const BASE_VERSION = "0.10";
+const BASE_VERSION = "0.11";
 const VERSION = `${BASE_VERSION}+${gitShortHash()}`;
 
 // Order matters: dependencies first.
@@ -62,6 +62,9 @@ const SOURCES = [
 	"src/features/sort-stories.js",
 	"src/features/reply-inline.js",
 	"src/features/user-render.js",
+	"src/features/watch-toggles.js",
+	"src/features/watched-comment-nav.js",
+	"src/features/watched-listing-highlights.js",
 	"src/features/tag-manager.js",
 	"src/features/toolbar.js",
 	"src/main.js",

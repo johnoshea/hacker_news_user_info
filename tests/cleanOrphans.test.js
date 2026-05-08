@@ -32,7 +32,8 @@ test("cleanOrphans drops unused color entries and preserves the rest", () => {
 	assert.deepEqual(removed, ["orphan"]);
 });
 
-// An export with no orphans round-trips through the cleaner unchanged.
+// An export with no orphans round-trips through the cleaner unchanged
+// (modulo the addition of a watches slot, which stateToExport now includes).
 // Guards against accidental filtering of in-use tags or users.
 test("cleanOrphans is a no-op when every tag has a user", () => {
 	const exported = {
@@ -46,6 +47,14 @@ test("cleanOrphans is a no-op when every tag has a user", () => {
 
 	const { cleaned, removed } = cleanOrphans(exported);
 
-	assert.deepEqual(cleaned, exported);
+	assert.deepEqual(cleaned, {
+		customTags: {
+			foo: { bgColor: "f", textColor: "black" },
+		},
+		users: {
+			alice: { rating: 1, tags: ["foo"] },
+		},
+		watches: {},
+	});
 	assert.deepEqual(removed, []);
 });

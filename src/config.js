@@ -46,3 +46,14 @@ export const ITEM_FETCH_TIMEOUT_MS = 8000;
 // pages; short enough to feel responsive when the user actually wants
 // the preview.
 export const HOVER_DWELL_MS = 250;
+
+// How long a watched comment persists before being silently pruned.
+// HN threads rarely receive replies after two weeks, and the TTL stops
+// the watch list growing forever on threads that have gone cold.
+export const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+// Minimum interval between API rechecks of a single watched comment.
+// 30 minutes balances freshness ("new reply just arrived") against
+// load (each watched comment fires one tiny JSON request per session
+// per throttle window, behind fetchItem's inflight-dedup map).
+export const WATCH_RECHECK_THROTTLE_MS = 30 * 60 * 1000;

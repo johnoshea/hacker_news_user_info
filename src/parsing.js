@@ -223,3 +223,59 @@ export function parseTagInput(text) {
 	}
 	return out;
 }
+
+// True iff `latestKids` contains an id not present in `seenKids`. Used
+// by the watch-for-replies feature to decide whether a watched comment
+// has new replies that the user has not yet acknowledged. Both inputs
+// may be null/undefined (treated as empty).
+export function watchHasNewReplies(seenKids, latestKids) {
+	const seen = new Set(seenKids || []);
+	for (const id of latestKids || []) {
+		if (!seen.has(id)) return true;
+	}
+	return false;
+}
+
+// True iff lastCheckedAt is older than nowMs - throttleMs (i.e. due
+// for a fresh API recheck). A missing entry, missing lastCheckedAt,
+// or non-numeric lastCheckedAt is treated as stale so the very first
+// recheck always fires.
+export function isWatchCheckStale(entry, nowMs, throttleMs) {
+	if (!entry || typeof entry.lastCheckedAt !== "number") return true;
+	return nowMs - entry.lastCheckedAt > throttleMs;
+}
+
+// Return a new map containing only the watches that are still within
+// the TTL (addedAt within ttlMs of now). A missing or non-numeric
+// addedAt is treated as expired — defensive against malformed entries
+// from a botched import or a forward-incompatible schema change.
+export function pruneExpiredWatches(map, nowMs, ttlMs) {
+	const out = {};
+	for (const [commentId, entry] of Object.entries(map || {})) {
+		if (!entry || typeof entry.addedAt !== "number") continue;
+		if (nowMs - entry.addedAt <= ttlMs) {
+			out[commentId] = entry;
+		}
+	}
+	return out;
+}
+
+// Group a watchedComments map by itemId, attaching the derived
+// `hasNew` flag to each entry. Used by the listing-page highlight
+// pass to look up "are there any watched comments with new replies
+// in this story's thread?" in one keyed lookup per row.
+//
+// Returns: { [itemId]: [{ commentId, hasNew }, ...] }
+//
+// Entries missing an itemId are skipped (a malformed entry shouldn't
+// crash the listing-page pass).
+export function watchesByItemId(map) {
+	const out = {};
+	for (const [commentId, entry] of Object.entries(map || {})) {
+		if (!entry || typeof entry.itemId !== "string") continue;
+		const hasNew = watchHasNewReplies(entry.seenKids, entry.latestKids);
+		if (!out[entry.itemId]) out[entry.itemId] = [];
+		out[entry.itemId].push({ commentId, hasNew });
+	}
+	return out;
+}
