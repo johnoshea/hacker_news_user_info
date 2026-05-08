@@ -37,7 +37,7 @@ function gitShortHash() {
 	}
 }
 
-const BASE_VERSION = "0.10";
+const BASE_VERSION = "0.11";
 const VERSION = `${BASE_VERSION}+${gitShortHash()}`;
 
 // Order matters: dependencies first.
