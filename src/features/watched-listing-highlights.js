@@ -7,8 +7,8 @@
 // Runs unconditionally; gates internally on table.itemlist (matches
 // setupSortStories' approach so the call site in main.js stays simple).
 
-import { isWatchCheckStale, watchesByItemId } from "../parsing.js";
 import { WATCH_RECHECK_THROTTLE_MS } from "../config.js";
+import { isWatchCheckStale, watchesByItemId } from "../parsing.js";
 
 // Find the "n comments" link for a story row. HN renders each story
 // as <tr class="athing"> followed by a subtext <tr> on the next

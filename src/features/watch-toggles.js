@@ -16,9 +16,9 @@
 // and on resolve sync both latestKids and seenKids to the response.
 // This is the "visit clears new" step.
 
+import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
 import { h, isItemPage } from "../dom.js";
 import { isWatchCheckStale } from "../parsing.js";
-import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
 
 // Read the item id from the current page's URL. Same shape as
 // highlight-unread-comments' helper (the build's

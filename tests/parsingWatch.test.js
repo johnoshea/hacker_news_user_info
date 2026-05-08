@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-	watchHasNewReplies,
 	isWatchCheckStale,
 	pruneExpiredWatches,
 	watchesByItemId,
+	watchHasNewReplies,
 } from "../src/parsing.js";
 
 // The watch-for-replies feature stores `seenKids` (replies the user has
