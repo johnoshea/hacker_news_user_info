@@ -259,3 +259,23 @@ export function pruneExpiredWatches(map, nowMs, ttlMs) {
 	}
 	return out;
 }
+
+// Group a watchedComments map by itemId, attaching the derived
+// `hasNew` flag to each entry. Used by the listing-page highlight
+// pass to look up "are there any watched comments with new replies
+// in this story's thread?" in one keyed lookup per row.
+//
+// Returns: { [itemId]: [{ commentId, hasNew }, ...] }
+//
+// Entries missing an itemId are skipped (a malformed entry shouldn't
+// crash the listing-page pass).
+export function watchesByItemId(map) {
+	const out = {};
+	for (const [commentId, entry] of Object.entries(map || {})) {
+		if (!entry || typeof entry.itemId !== "string") continue;
+		const hasNew = watchHasNewReplies(entry.seenKids, entry.latestKids);
+		if (!out[entry.itemId]) out[entry.itemId] = [];
+		out[entry.itemId].push({ commentId, hasNew });
+	}
+	return out;
+}

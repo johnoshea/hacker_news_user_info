@@ -4,6 +4,7 @@ import {
 	watchHasNewReplies,
 	isWatchCheckStale,
 	pruneExpiredWatches,
+	watchesByItemId,
 } from "../src/parsing.js";
 
 // The watch-for-replies feature stores `seenKids` (replies the user has
@@ -111,4 +112,54 @@ test("pruneExpiredWatches: missing addedAt is dropped (defensive)", () => {
 	};
 	const pruned = pruneExpiredWatches(map, now, TTL_MS);
 	assert.deepEqual(Object.keys(pruned), ["ok"]);
+});
+
+test("watchesByItemId: empty input yields empty grouping", () => {
+	assert.deepEqual(watchesByItemId({}), {});
+	assert.deepEqual(watchesByItemId(null), {});
+});
+
+test("watchesByItemId: groups single watch under its itemId", () => {
+	const grouped = watchesByItemId({
+		c1: { itemId: "i1", seenKids: [], latestKids: ["r1"] },
+	});
+	assert.deepEqual(grouped, {
+		i1: [{ commentId: "c1", hasNew: true }],
+	});
+});
+
+test("watchesByItemId: groups multiple watches in one item", () => {
+	const grouped = watchesByItemId({
+		c1: { itemId: "i1", seenKids: ["r1"], latestKids: ["r1"] },
+		c2: { itemId: "i1", seenKids: [], latestKids: ["r2"] },
+	});
+	// Order within an itemId is insertion order — fine for our use,
+	// since callers iterate the whole array.
+	assert.deepEqual(grouped, {
+		i1: [
+			{ commentId: "c1", hasNew: false },
+			{ commentId: "c2", hasNew: true },
+		],
+	});
+});
+
+test("watchesByItemId: groups across multiple items", () => {
+	const grouped = watchesByItemId({
+		c1: { itemId: "i1", seenKids: [], latestKids: [] },
+		c2: { itemId: "i2", seenKids: [], latestKids: ["r"] },
+	});
+	assert.deepEqual(grouped, {
+		i1: [{ commentId: "c1", hasNew: false }],
+		i2: [{ commentId: "c2", hasNew: true }],
+	});
+});
+
+test("watchesByItemId: skips entries missing itemId (defensive)", () => {
+	const grouped = watchesByItemId({
+		c1: { seenKids: [], latestKids: [] },
+		c2: { itemId: "i2", seenKids: [], latestKids: [] },
+	});
+	assert.deepEqual(grouped, {
+		i2: [{ commentId: "c2", hasNew: false }],
+	});
 });
