@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.10+bfdb9b9
+// @version      0.10+8c972f0
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -3009,6 +3009,11 @@ function setupWatchToggles({ store, fetchItem }) {
 	if (!isItemPage()) return;
 	const itemId = getItemIdFromWatchTogglesUrl();
 	if (!itemId) return;
+
+	// Prune watches past the TTL on every item-page load — same
+	// pattern that highlight-unread-comments uses for read-comment
+	// entries, so the watch list can't grow without bound.
+	store.pruneWatchedComments(Date.now(), WATCH_TTL_MS);
 
 	const rows = Array.from(document.querySelectorAll("tr.comtr"));
 

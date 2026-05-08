@@ -18,7 +18,7 @@
 
 import { h, isItemPage } from "../dom.js";
 import { isWatchCheckStale } from "../parsing.js";
-import { WATCH_RECHECK_THROTTLE_MS } from "../config.js";
+import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
 
 // Read the item id from the current page's URL. Same shape as
 // highlight-unread-comments' helper (the build's
@@ -42,6 +42,11 @@ export function setupWatchToggles({ store, fetchItem }) {
 	if (!isItemPage()) return;
 	const itemId = getItemIdFromWatchTogglesUrl();
 	if (!itemId) return;
+
+	// Prune watches past the TTL on every item-page load — same
+	// pattern that highlight-unread-comments uses for read-comment
+	// entries, so the watch list can't grow without bound.
+	store.pruneWatchedComments(Date.now(), WATCH_TTL_MS);
 
 	const rows = Array.from(document.querySelectorAll("tr.comtr"));
 
