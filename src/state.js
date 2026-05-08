@@ -202,6 +202,45 @@ export function createStore(backend) {
 			const map = load().watchedComments || {};
 			return map[commentId] || null;
 		},
+		setWatchedComment(commentId, entry) {
+			mutate((s) => {
+				s.watchedComments[commentId] = {
+					itemId: entry.itemId,
+					seenKids: (entry.seenKids || []).slice(),
+					latestKids: (entry.latestKids || []).slice(),
+					lastCheckedAt: entry.lastCheckedAt,
+					addedAt: entry.addedAt,
+				};
+			});
+		},
+		removeWatchedComment(commentId) {
+			mutate((s) => {
+				if (!s.watchedComments?.[commentId]) return false;
+				delete s.watchedComments[commentId];
+			});
+		},
+		// Sync seenKids to latestKids — i.e. acknowledge every reply the
+		// most recent API check returned. Called when the user lands on
+		// the item page where a watched comment is rendered.
+		markWatchSeen(commentId, _nowMs) {
+			mutate((s) => {
+				const e = s.watchedComments?.[commentId];
+				if (!e) return false;
+				e.seenKids = (e.latestKids || []).slice();
+			});
+		},
+		// Replace latestKids with a fresh API result and stamp the check
+		// timestamp. Doesn't touch seenKids — the watch retains its
+		// "what's new since I last looked" notion until the user visits
+		// the item page.
+		updateWatchKids(commentId, kids, nowMs) {
+			mutate((s) => {
+				const e = s.watchedComments?.[commentId];
+				if (!e) return false;
+				e.latestKids = (kids || []).slice();
+				e.lastCheckedAt = nowMs;
+			});
+		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
 			mutate((s) => {
 				s.tags = tagsByUser;
