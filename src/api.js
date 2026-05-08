@@ -70,9 +70,17 @@ export function createApi({ store }) {
 		return promise;
 	}
 
-	function fetchItem(itemId) {
-		const cached = store.getCachedItem(itemId, Date.now(), ITEM_CACHE_TTL_MS);
-		if (cached) return Promise.resolve(cached);
+	// `fresh: true` skips the persistent cache read but still participates
+	// in inflight-dedup and still writes the cache on resolve. Used by
+	// the watch-for-replies feature, where the 6h cache would otherwise
+	// shadow the 30-min recheck throttle. Hover-popup callers leave the
+	// default in place — title/score/karma drift slowly enough that the
+	// 6h cache is fine for them.
+	function fetchItem(itemId, { fresh = false } = {}) {
+		if (!fresh) {
+			const cached = store.getCachedItem(itemId, Date.now(), ITEM_CACHE_TTL_MS);
+			if (cached) return Promise.resolve(cached);
+		}
 		if (itemInflight.has(itemId)) return itemInflight.get(itemId);
 
 		const promise = new Promise((resolve) => {
@@ -101,6 +109,10 @@ export function createApi({ store }) {
 							time: typeof data.time === "number" ? data.time : 0,
 							text: data.text || "",
 							type: data.type || "story",
+							// Direct replies. Used by the watch-for-replies feature
+							// to detect new replies on a watched comment without
+							// loading the full comment page. Hover popup ignores it.
+							kids: Array.isArray(data.kids) ? data.kids.slice() : [],
 						};
 						store.setCachedItem(itemId, digest, Date.now());
 						resolve(digest);
