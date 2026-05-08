@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+8bc501d
+// @version      0.11+66f7356
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -951,6 +951,17 @@ function findCommentParent(usernameEl) {
 }
 function isItemPage() {
 	return window.location.pathname === "/item";
+}
+
+// Read the item id from the current page's `?id=` URL parameter, or
+// null if absent. Pairs with `isItemPage()` — both inspect
+// `window.location` so they live together. Centralising here also
+// dodges the build script's duplicate-function-name check, which
+// otherwise forces each feature module to spell its own copy with a
+// distinct name (see `scripts/build.js`).
+function getItemPageId() {
+	const params = new URLSearchParams(window.location.search);
+	return params.get("id") || null;
 }
 
 
@@ -1987,15 +1998,6 @@ function setupToggleAllComments() {
 
 
 
-// Read the item id from the current page's URL. Distinct from
-// item-info-hover's same-purpose helper, which reads from a hovered
-// link's href. The build concatenates every module into one IIFE, so
-// function names must be unique across src/features/*.js — same-name
-// declarations would silently override each other.
-function getCurrentItemIdFromUrl() {
-	const params = new URLSearchParams(window.location.search);
-	return params.get("id") || null;
-}
 
 function getCurrentCommentIds() {
 	return Array.from(document.querySelectorAll("tr.comtr"))
@@ -2003,7 +2005,7 @@ function getCurrentCommentIds() {
 		.filter(Boolean);
 }
 function setupHighlightUnreadComments({ store }) {
-	const itemId = getCurrentItemIdFromUrl();
+	const itemId = getItemPageId();
 	if (!itemId) return;
 
 	const now = Date.now();
@@ -2988,15 +2990,6 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 
 
 
-// Read the item id from the current page's URL. Same shape as
-// highlight-unread-comments' helper (the build's
-// checkForDuplicateTopLevelFunctions check forces unique names
-// across feature modules, so this one is named for its caller).
-function getItemIdFromWatchTogglesUrl() {
-	const params = new URLSearchParams(window.location.search);
-	return params.get("id") || null;
-}
-
 const ICON_OFF = "👁";
 const ICON_ON = "👁‍🗨";
 
@@ -3007,7 +3000,7 @@ function setIconState(iconEl, isOn) {
 }
 function setupWatchToggles({ store, fetchItem }) {
 	if (!isItemPage()) return;
-	const itemId = getItemIdFromWatchTogglesUrl();
+	const itemId = getItemPageId();
 	if (!itemId) return;
 
 	// Prune watches past the TTL on every item-page load — same
@@ -3113,15 +3106,9 @@ function setupWatchToggles({ store, fetchItem }) {
 // means "before any" — the first click on `watch ↓` jumps to the
 // first watched comment. Disabled state is recomputed after every
 // click so a single-watch thread can never click `↑ watch`.
-
-
-function getItemIdFromCommentNavUrl() {
-	const params = new URLSearchParams(window.location.search);
-	return params.get("id") || null;
-}
 function setupWatchedCommentNav({ store, toolbar }) {
 	if (!isItemPage()) return;
-	const itemId = getItemIdFromCommentNavUrl();
+	const itemId = getItemPageId();
 	if (!itemId) return;
 
 	// Resolve every on-page row for a watch in this thread, in DOM
