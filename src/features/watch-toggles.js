@@ -16,7 +16,7 @@
 // and on resolve sync both latestKids and seenKids to the response.
 // This is the "visit clears new" step.
 
-import { isItemPage } from "../dom.js";
+import { h, isItemPage } from "../dom.js";
 import { isWatchCheckStale } from "../parsing.js";
 import { WATCH_RECHECK_THROTTLE_MS } from "../config.js";
 
@@ -52,14 +52,13 @@ export function setupWatchToggles({ store, fetchItem }) {
 		const mainRow = row.querySelector(".hn-main-row");
 		if (!mainRow) continue;
 
-		const ratingContainer = mainRow.querySelector(".hn-rating-container");
 		const tagInput = mainRow.querySelector(".hn-tag-input");
-		if (!ratingContainer || !tagInput) continue;
+		// Skip any .hn-main-row that user-render didn't fully populate.
+		if (!tagInput || !mainRow.querySelector(".hn-rating-container")) continue;
 
 		const initiallyWatched = store.getWatchedComment(commentId) !== null;
 
-		const icon = document.createElement("span");
-		icon.className = "hn-watch-icon";
+		const icon = h("span", { class: "hn-watch-icon" });
 		icon.dataset.hnComment = commentId;
 		setIconState(icon, initiallyWatched);
 

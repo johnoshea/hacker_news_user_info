@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.10+e11556a
+// @version      0.10+1e9c259
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -3019,14 +3019,13 @@ function setupWatchToggles({ store, fetchItem }) {
 		const mainRow = row.querySelector(".hn-main-row");
 		if (!mainRow) continue;
 
-		const ratingContainer = mainRow.querySelector(".hn-rating-container");
 		const tagInput = mainRow.querySelector(".hn-tag-input");
-		if (!ratingContainer || !tagInput) continue;
+		// Skip any .hn-main-row that user-render didn't fully populate.
+		if (!tagInput || !mainRow.querySelector(".hn-rating-container")) continue;
 
 		const initiallyWatched = store.getWatchedComment(commentId) !== null;
 
-		const icon = document.createElement("span");
-		icon.className = "hn-watch-icon";
+		const icon = h("span", { class: "hn-watch-icon" });
 		icon.dataset.hnComment = commentId;
 		setIconState(icon, initiallyWatched);
 
