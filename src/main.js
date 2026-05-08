@@ -22,6 +22,7 @@ import { createToolbar } from "./features/toolbar.js";
 import { setupUserInfoHover } from "./features/user-info-hover.js";
 import { createUserRender } from "./features/user-render.js";
 import { setupWatchToggles } from "./features/watch-toggles.js";
+import { setupWatchedCommentNav } from "./features/watched-comment-nav.js";
 import { createStore, migrateLegacyKeys } from "./state.js";
 import { STYLES } from "./styles.js";
 
@@ -92,6 +93,7 @@ if (isItemPage()) {
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
 	toolbar.mount();
+	setupWatchedCommentNav({ store, toolbar });
 }
 
 // User-info hover wires every .hnuser on every page (except /user
