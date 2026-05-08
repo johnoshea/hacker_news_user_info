@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { watchHasNewReplies, isWatchCheckStale } from "../src/parsing.js";
+import {
+	watchHasNewReplies,
+	isWatchCheckStale,
+	pruneExpiredWatches,
+} from "../src/parsing.js";
 
 // The watch-for-replies feature stores `seenKids` (replies the user has
 // acknowledged by visiting the comment page) and `latestKids` (replies
@@ -76,4 +80,35 @@ test("isWatchCheckStale: missing entry / lastCheckedAt is stale", () => {
 		isWatchCheckStale({ lastCheckedAt: "not a number" }, now, THROTTLE_MS),
 		true,
 	);
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TTL_MS = 14 * DAY_MS;
+
+test("pruneExpiredWatches: empty/null input returns empty object", () => {
+	assert.deepEqual(pruneExpiredWatches({}, 100, TTL_MS), {});
+	assert.deepEqual(pruneExpiredWatches(null, 100, TTL_MS), {});
+	assert.deepEqual(pruneExpiredWatches(undefined, 100, TTL_MS), {});
+});
+
+test("pruneExpiredWatches: keeps fresh entries, drops stale", () => {
+	const now = 1_000_000_000_000;
+	const map = {
+		fresh: { addedAt: now - DAY_MS },
+		stale: { addedAt: now - 15 * DAY_MS },
+		brand_new: { addedAt: now },
+	};
+	const pruned = pruneExpiredWatches(map, now, TTL_MS);
+	assert.deepEqual(Object.keys(pruned).sort(), ["brand_new", "fresh"]);
+});
+
+test("pruneExpiredWatches: missing addedAt is dropped (defensive)", () => {
+	const now = 1_000_000_000_000;
+	const map = {
+		ok: { addedAt: now },
+		broken: {},
+		broken2: { addedAt: "nope" },
+	};
+	const pruned = pruneExpiredWatches(map, now, TTL_MS);
+	assert.deepEqual(Object.keys(pruned), ["ok"]);
 });

@@ -244,3 +244,18 @@ export function isWatchCheckStale(entry, nowMs, throttleMs) {
 	if (!entry || typeof entry.lastCheckedAt !== "number") return true;
 	return nowMs - entry.lastCheckedAt > throttleMs;
 }
+
+// Return a new map containing only the watches that are still within
+// the TTL (addedAt within ttlMs of now). A missing or non-numeric
+// addedAt is treated as expired — defensive against malformed entries
+// from a botched import or a forward-incompatible schema change.
+export function pruneExpiredWatches(map, nowMs, ttlMs) {
+	const out = {};
+	for (const [commentId, entry] of Object.entries(map || {})) {
+		if (!entry || typeof entry.addedAt !== "number") continue;
+		if (nowMs - entry.addedAt <= ttlMs) {
+			out[commentId] = entry;
+		}
+	}
+	return out;
+}
