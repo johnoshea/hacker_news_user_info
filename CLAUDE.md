@@ -13,7 +13,7 @@ A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 5. **`/user` page enhancement**: plain-text URLs and email addresses in the about cell get turned into clickable links.
 6. **Watch-for-replies cross-page layer**: `setupWatchedListingHighlights` runs on listing pages (anything with `table.itemlist`); for each story whose thread contains a watched comment, fires a throttle-aware Firebase API recheck and adds `.hn-watched-link` (bold HN orange + `★ ` prefix) to the "n comments" link when new direct replies have arrived since you started watching.
 
-`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`), `setupLinkifyUserAbout`, and `setupSortStories` on every HN page (each feature internally checks whether its page is the right one). The enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `setupItemInfoHover`, `setupReplyInline`, `toolbar.mount`) run only on item pages. `setupUserInfoHover` runs last and on every HN page (the feature internally skips `/user`); it has to come after `renderAllUsernames` so the hover handler lands on the visible cloned `.hnuser` rather than the now-hidden original.
+`src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`), `setupLinkifyUserAbout`, `setupSortStories`, and `setupWatchedListingHighlights` on every HN page (each feature internally checks whether its page is the right one). The enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `setupItemInfoHover`, `setupReplyInline`, `toolbar.mount`) run only on item pages. `setupUserInfoHover` runs last and on every HN page (the feature internally skips `/user`); it has to come after `renderAllUsernames` so the hover handler lands on the visible cloned `.hnuser` rather than the now-hidden original.
 
 ## Commands
 
@@ -181,7 +181,7 @@ Each overlay row is keyed by the tag's name as it was when the overlay opened. P
 
 Exposed as a factory: `createToolbar({ store, backend })` → `{ mount }`. `mount()` builds a small draggable bar in the top-right with Save state / Restore state buttons.
 
-Export format is unchanged from v0.3 for backward compatibility: `{ customTags, users }`. `stateToExport(state)` (in `src/state.js`) produces it from a snapshot of the store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import writes the new consolidated blob via the backend and reloads.
+Export format extends the v0.3 shape with a `watches` slot, but is otherwise backward compatible: `{ customTags, users, watches }`. Old backups without `watches` import as before with an empty watch list. `stateToExport(state)` (in `src/state.js`) produces it from a snapshot of the store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import writes the new consolidated blob via the backend and reloads.
 
 ### Watch-for-replies (`src/features/watch-toggles.js`, `watched-comment-nav.js`, `watched-listing-highlights.js`)
 
@@ -207,7 +207,7 @@ The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one
 6. `createToolbar({ store, backend })` for export/import.
 7. `GM_addValueChangeListener(STATE_KEY, …)` for cross-tab sync — calls `tagManager.getActive()?.markStale()` and the user-render rerender helpers.
 8. Always: `applyDownvotedClass()`, `transformQuotes()`.
-9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `userRender.renderAllUsernames()`, `toolbar.mount()`.
+9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `userRender.renderAllUsernames()`, `setupWatchToggles()`, `toolbar.mount()`, `setupWatchedCommentNav()`.
 
 ## Userscript metadata
 

@@ -72,7 +72,7 @@ A small draggable toolbar in the top-right corner has **Save state** and **Resto
 
 **Cross-tab sync.** Rating and tag changes made in one tab are automatically reflected in other open HN tabs.
 
-**Backing up your data.** Click **Save state** in the top-right toolbar. A JSON file downloads containing all your ratings, tags, and tag colors.
+**Backing up your data.** Click **Save state** in the top-right toolbar. A JSON file downloads containing all your ratings, tags, tag colors, and watched comments.
 
 **Restoring your data.** Click **Restore state** and pick a previously-exported JSON file. Your current data is replaced and the page reloads.
 

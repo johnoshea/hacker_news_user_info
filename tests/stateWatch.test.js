@@ -150,7 +150,6 @@ test("store: pruneWatchedComments is a no-op when nothing is stale", () => {
 		lastCheckedAt: now,
 		addedAt: now,
 	});
-	const before = backend.data;
 	store.pruneWatchedComments(now, WATCH_TTL);
 	// Method returns nothing observable when nothing is pruned;
 	// confirm the entry is still there.
