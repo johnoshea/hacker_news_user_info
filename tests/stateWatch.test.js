@@ -156,3 +156,69 @@ test("store: pruneWatchedComments is a no-op when nothing is stale", () => {
 	// confirm the entry is still there.
 	assert.equal(store.getWatchedComment("c1") !== null, true);
 });
+
+import { parseImport, stateToExport } from "../src/state.js";
+
+test("stateToExport: includes a watches slot", () => {
+	const state = {
+		ratings: {},
+		tags: {},
+		colors: {},
+		watchedComments: {
+			c1: {
+				itemId: "i1",
+				seenKids: ["r1"],
+				latestKids: ["r1", "r2"],
+				lastCheckedAt: 1_000,
+				addedAt: 500,
+			},
+		},
+	};
+	const exported = stateToExport(state);
+	assert.deepEqual(exported.watches, {
+		c1: {
+			itemId: "i1",
+			seenKids: ["r1"],
+			latestKids: ["r1", "r2"],
+			lastCheckedAt: 1_000,
+			addedAt: 500,
+		},
+	});
+});
+
+test("stateToExport: empty watchedComments yields empty watches", () => {
+	const state = { ratings: {}, tags: {}, colors: {} };
+	const exported = stateToExport(state);
+	assert.deepEqual(exported.watches, {});
+});
+
+test("parseImport: round-trips watches from normalized export", () => {
+	const exported = {
+		customTags: {},
+		users: {},
+		watches: {
+			c1: {
+				itemId: "i1",
+				seenKids: ["r1"],
+				latestKids: ["r1", "r2"],
+				lastCheckedAt: 1_000,
+				addedAt: 500,
+			},
+		},
+	};
+	const state = parseImport(exported);
+	assert.deepEqual(state.watchedComments, {
+		c1: {
+			itemId: "i1",
+			seenKids: ["r1"],
+			latestKids: ["r1", "r2"],
+			lastCheckedAt: 1_000,
+			addedAt: 500,
+		},
+	});
+});
+
+test("parseImport: a normalized export without watches yields empty watchedComments", () => {
+	const state = parseImport({ customTags: {}, users: {} });
+	assert.deepEqual(state.watchedComments, {});
+});

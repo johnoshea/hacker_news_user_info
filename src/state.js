@@ -355,7 +355,7 @@ export function parseImport(data) {
 	if (!data || typeof data !== "object") return state;
 
 	// Normalized format.
-	if (data.customTags || data.users) {
+	if (data.customTags || data.users || data.watches) {
 		if (data.customTags && typeof data.customTags === "object") {
 			for (const [tagName, info] of Object.entries(data.customTags)) {
 				if (info?.bgColor) {
@@ -375,6 +375,21 @@ export function parseImport(data) {
 				if (Array.isArray(userData.tags)) {
 					state.tags[username] = userData.tags.slice();
 				}
+			}
+		}
+		if (data.watches && typeof data.watches === "object") {
+			for (const [commentId, entry] of Object.entries(data.watches)) {
+				if (!entry || typeof entry.itemId !== "string") continue;
+				state.watchedComments[commentId] = {
+					itemId: entry.itemId,
+					seenKids: Array.isArray(entry.seenKids) ? entry.seenKids.slice() : [],
+					latestKids: Array.isArray(entry.latestKids)
+						? entry.latestKids.slice()
+						: [],
+					lastCheckedAt:
+						typeof entry.lastCheckedAt === "number" ? entry.lastCheckedAt : 0,
+					addedAt: typeof entry.addedAt === "number" ? entry.addedAt : 0,
+				};
 			}
 		}
 		return state;
@@ -427,8 +442,9 @@ export function parseImport(data) {
 }
 
 // Normalized export shape. Stable across versions so old backups stay
-// interoperable. Cache is intentionally dropped - it's perf scaffolding,
-// not user data, and shouldn't bloat export files.
+// interoperable. Cache is intentionally dropped — it's perf scaffolding,
+// not user data, and shouldn't bloat export files. `watches` is user
+// data (a deliberate user choice), so it ships in exports.
 export function stateToExport(state) {
 	const customTags = {};
 	for (const [tagName, info] of Object.entries(state.colors || {})) {
@@ -448,7 +464,20 @@ export function stateToExport(state) {
 		if (rating === 0 && tags.length === 0) continue;
 		users[username] = { rating, tags: tags.slice() };
 	}
-	return { customTags, users };
+	const watches = {};
+	for (const [commentId, entry] of Object.entries(
+		state.watchedComments || {},
+	)) {
+		if (!entry || typeof entry.itemId !== "string") continue;
+		watches[commentId] = {
+			itemId: entry.itemId,
+			seenKids: (entry.seenKids || []).slice(),
+			latestKids: (entry.latestKids || []).slice(),
+			lastCheckedAt: entry.lastCheckedAt,
+			addedAt: entry.addedAt,
+		};
+	}
+	return { customTags, users, watches };
 }
 
 // Returns a new state with every user's `oldName` tag replaced by `newName`
