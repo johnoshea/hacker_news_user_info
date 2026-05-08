@@ -7,10 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 
 1. **Site-wide legibility layer** (every HN page, `news.ycombinator.com/*`): font reset, sizing, gutters, full-width main, downvoted-comment restyling (black-on-faint-grey), quoted-text rendering (`>`-prefixed text wrapped in `<p class="quote">` with HN-orange accents), and `.rank` hidden. CSS comes from a `:root` block with `--colour-hn-orange`, `--colour-hn-orange-pale`, `--gutter`, and `--border-radius` tokens. Adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
-2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, "toggle all" link on the fatitem subtext, backtick-wrapped text rendered as `<code>`, highlight for comments new since last visit, hover-on-cited-item popup, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, and a "show comment box" toggle that collapses the page-bottom comment-submit form.
+2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, "toggle all" link on the fatitem subtext, backtick-wrapped text rendered as `<code>`, highlight for comments new since last visit, hover-on-cited-item popup, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, a "show comment box" toggle that collapses the page-bottom comment-submit form, and a per-comment "watch for replies" toggle (eye icon) with toolbar prev/next nav between watched comments.
 3. **Hover-on-username popup** runs on every HN page (except `/user`, where you're already looking at the profile): hovering any `.hnuser` for the dwell period (250ms) shows a popup with their account age, karma, and about-text snippet, fetched once and cached for 6h.
 4. **Listing-page enhancements** (any page with a `table.itemlist`): a "sort: …" dropdown re-orders the story list in place — `default` / `time` / `score` / `ratio`, plus a `reverse` link.
 5. **`/user` page enhancement**: plain-text URLs and email addresses in the about cell get turned into clickable links.
+6. **Watch-for-replies cross-page layer**: `setupWatchedListingHighlights` runs on listing pages (anything with `table.itemlist`); for each story whose thread contains a watched comment, fires a throttle-aware Firebase API recheck and adds `.hn-watched-link` (bold HN orange + `★ ` prefix) to the "n comments" link when new direct replies have arrived since you started watching.
 
 `src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`), `setupLinkifyUserAbout`, and `setupSortStories` on every HN page (each feature internally checks whether its page is the right one). The enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `setupItemInfoHover`, `setupReplyInline`, `toolbar.mount`) run only on item pages. `setupUserInfoHover` runs last and on every HN page (the feature internally skips `/user`); it has to come after `renderAllUsernames` so the hover handler lands on the visible cloned `.hnuser` rather than the now-hidden original.
 
@@ -65,6 +66,17 @@ src/
                              relevant HN form into the comment instead of navigating away
     user-render.js           createUserRender factory: renderAllUsernames + per-user rerender
                              (also adds the .hn-op class + " [op]" marker on OP's comments)
+    watch-toggles.js         setupWatchToggles: per-comment 👁/👁‍🗨 toggle in the
+                             user-render row; on click, persists a watch entry
+                             keyed by comment id; on page load, marks watched
+                             rows and syncs seenKids/latestKids
+    watched-comment-nav.js   setupWatchedCommentNav: appends ↑ watch / watch ↓
+                             buttons to the toolbar when at least one watched
+                             comment is on the page; disabled state at ends
+    watched-listing-highlights.js  setupWatchedListingHighlights: on listing
+                             pages, restyles the "n comments" link of stories
+                             whose thread contains a watched comment with new
+                             replies (★ + bold HN orange)
     tag-manager.js           createTagManager factory: overlay state machine
     toolbar.js               createToolbar factory: floating Save/Restore-state buttons
   main.js                    Bootstrap: builds backend, store, api, features; wires
@@ -106,7 +118,9 @@ All state lives under a single `hn_state` key (`STATE_KEY` in `src/config.js`) w
   ratings: { <user>: int },
   tags:    { <user>: [<tagName>, ...] },
   colors:  { <tagName>: { bgColor, textColor } },
-  cache:   { <user>: { created, karma, fetchedAt } } }
+  cache:   { <user>: { created, karma, fetchedAt } },
+  itemCache: { <itemId>: { title, ..., kids, fetchedAt } },
+  watchedComments: { <commentId>: { itemId, seenKids, latestKids, lastCheckedAt, addedAt } } }
 ```
 Callers never touch `GM_setValue`/`GM_getValue` directly — they go through the `store` object returned by `createStore(backend)` in `src/state.js`, where `backend` is the `{ get, set, list }` adapter that `src/main.js` builds around the `GM_*` APIs. The store consolidates writes into one JSON blob and caches reads in memory.
 
@@ -168,6 +182,18 @@ Each overlay row is keyed by the tag's name as it was when the overlay opened. P
 Exposed as a factory: `createToolbar({ store, backend })` → `{ mount }`. `mount()` builds a small draggable bar in the top-right with Save state / Restore state buttons.
 
 Export format is unchanged from v0.3 for backward compatibility: `{ customTags, users }`. `stateToExport(state)` (in `src/state.js`) produces it from a snapshot of the store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import writes the new consolidated blob via the backend and reloads.
+
+### Watch-for-replies (`src/features/watch-toggles.js`, `watched-comment-nav.js`, `watched-listing-highlights.js`)
+
+A per-comment "watch this for replies" toggle. On click, the eye icon between the rating control and the tag input persists `state.watchedComments[commentId] = { itemId, seenKids, latestKids, lastCheckedAt, addedAt }`. The watch is per-comment (not per-user) — a single user with three comments in a thread can be watched on one, two, or all three independently.
+
+Reply detection is proactive: every HN page load (including listing pages) walks the watches map, fires a `fetchItem(commentId, { fresh: true })` for any watch whose `lastCheckedAt` is past the 30-minute throttle, and updates `latestKids` with the response. The `fresh` opt-in bypasses `fetchItem`'s 6-hour persistent cache; without it, the throttle would be a no-op for the first six hours after a watch is created.
+
+`hasNew` is derived as `latestKids.some(id => !seenKids.includes(id))`. On listing pages, the "n comments" link gets `.hn-watched-link` (bold HN orange + a `★ ` prefix) when any watch in that thread has `hasNew`. On item pages, every watched-comment row on the page is given `.hn-watched` (orange left border + faint yellow tint), and `markWatchSeen` syncs `seenKids = latestKids` so the listing-page highlight is cleared by the act of visiting.
+
+Lifecycle: watches persist until the user toggles off. A 14-day TTL (`WATCH_TTL_MS`) is enforced on every item-page load via `store.pruneWatchedComments` — HN threads rarely receive replies after that window, and the prune stops the list growing forever on cold threads.
+
+The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one watched comment is on the page, jumping between watched comments in document order. `watched-comment-nav` discovers the toolbar's button container via the new `toolbar.getButtonsContainer()` accessor — the toolbar itself doesn't know about watches.
 
 ### Wiring (`src/main.js`)
 
