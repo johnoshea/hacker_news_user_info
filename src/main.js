@@ -21,6 +21,7 @@ import { setupToggleAllComments } from "./features/toggle-all-comments.js";
 import { createToolbar } from "./features/toolbar.js";
 import { setupUserInfoHover } from "./features/user-info-hover.js";
 import { createUserRender } from "./features/user-render.js";
+import { setupWatchToggles } from "./features/watch-toggles.js";
 import { createStore, migrateLegacyKeys } from "./state.js";
 import { STYLES } from "./styles.js";
 
@@ -87,6 +88,7 @@ if (isItemPage()) {
 	setupToggleAllComments();
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
+	setupWatchToggles({ store, fetchItem });
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
 	toolbar.mount();

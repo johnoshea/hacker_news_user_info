@@ -62,6 +62,7 @@ const SOURCES = [
 	"src/features/sort-stories.js",
 	"src/features/reply-inline.js",
 	"src/features/user-render.js",
+	"src/features/watch-toggles.js",
 	"src/features/tag-manager.js",
 	"src/features/toolbar.js",
 	"src/main.js",
