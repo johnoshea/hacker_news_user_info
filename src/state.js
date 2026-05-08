@@ -19,7 +19,8 @@ export function emptyState() {
 		colors: {}, // tagName  -> { bgColor, textColor }
 		cache: {}, // username -> { created, karma, fetchedAt }
 		readComments: {}, // itemId -> { ids: [...], fetchedAt }
-		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, fetchedAt }
+		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, kids, fetchedAt }
+		watchedComments: {}, // commentId -> { itemId, seenKids, latestKids, lastCheckedAt, addedAt }
 	};
 }
 
@@ -187,6 +188,19 @@ export function createStore(backend) {
 				}
 				s.readComments = after;
 			});
+		},
+		// Watched-comments map for the watch-for-replies feature. Keyed
+		// by HN comment id; each entry stores the parent itemId (so the
+		// listing-page pass can look up "any watched comments in this
+		// story?"), the `seenKids` snapshot of replies the user has
+		// acknowledged, the `latestKids` from the most recent API check,
+		// and timestamps driving the recheck throttle and TTL prune.
+		getWatchedComments() {
+			return load().watchedComments || {};
+		},
+		getWatchedComment(commentId) {
+			const map = load().watchedComments || {};
+			return map[commentId] || null;
 		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
 			mutate((s) => {
