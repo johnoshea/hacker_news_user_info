@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.10+975ce60
+// @version      0.10+8fe0982
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -1492,6 +1492,48 @@ const STYLES = `
     .hn-reply-loader {
       color: #888;
       font-size: 0.85em;
+    }
+
+    /* Watch-for-replies: per-comment toggle icon, sitting in
+       .hn-main-row between the rating control and the tag input. */
+    .hn-watch-icon {
+      cursor: pointer;
+      user-select: none;
+      margin: 0 4px;
+      opacity: 0.6;
+    }
+    .hn-watch-icon:hover { opacity: 1; }
+    .hn-watch-icon.hn-watching { opacity: 1; }
+
+    /* Watched-comment row: thick orange left border (in the indent
+       gutter) plus a faint yellow background tint on every cell.
+       Yellow is deliberately distinct from the orange tint that
+       hn-new-comment uses, so a row that is somehow both still reads
+       as both. */
+    .hn-watched > td.ind {
+      border-left: 5px solid var(--colour-hn-orange);
+    }
+    .hn-watched > td {
+      background-color: rgba(255, 255, 0, 0.10);
+    }
+
+    /* Toolbar prev/next-watch buttons. Inherits .hn-toolbar-btn
+       padding/border from the existing toolbar rule. */
+    .hn-watch-nav[disabled] {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    /* Listing-page "n comments" link with new replies on a watched
+       comment. The leading star is injected via ::before so the
+       underlying anchor's textContent (used by HN's "n comments"
+       counting) is undisturbed. */
+    .hn-watched-link {
+      font-weight: bold;
+      color: var(--colour-hn-orange) !important;
+    }
+    .hn-watched-link::before {
+      content: "★ ";
     }
   `;
 
