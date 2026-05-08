@@ -17,17 +17,8 @@
 // This is the "visit clears new" step.
 
 import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
-import { h, isItemPage } from "../dom.js";
+import { getItemPageId, h, isItemPage } from "../dom.js";
 import { isWatchCheckStale } from "../parsing.js";
-
-// Read the item id from the current page's URL. Same shape as
-// highlight-unread-comments' helper (the build's
-// checkForDuplicateTopLevelFunctions check forces unique names
-// across feature modules, so this one is named for its caller).
-function getItemIdFromWatchTogglesUrl() {
-	const params = new URLSearchParams(window.location.search);
-	return params.get("id") || null;
-}
 
 const ICON_OFF = "👁";
 const ICON_ON = "👁‍🗨";
@@ -40,7 +31,7 @@ function setIconState(iconEl, isOn) {
 
 export function setupWatchToggles({ store, fetchItem }) {
 	if (!isItemPage()) return;
-	const itemId = getItemIdFromWatchTogglesUrl();
+	const itemId = getItemPageId();
 	if (!itemId) return;
 
 	// Prune watches past the TTL on every item-page load — same

@@ -38,7 +38,7 @@ src/
                              linkifySegments, sortStoriesBy
   state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
-  dom.js                     h() factory, findCommentParent, isItemPage
+  dom.js                     h() factory, findCommentParent, isItemPage, getItemPageId
   styles.js                  CSS as a single tagged-template export (STYLES)
   api.js                     createApi factory: fetchUser with cache + inflight + timeout
   features/
@@ -98,7 +98,7 @@ The repository is split into pure logic, browser-only code, and a build step tha
 
 `scripts/build.js` reads the files listed in its `SOURCES` array, in dependency order, strips ES module `import`/`export` declarations with regex (we only use the simple declaration forms), concatenates them with `// ===== <path> =====` separators, wraps the whole body in `(function () { "use strict"; … })()`, and prepends the `==UserScript==` header. The result is written to `script.js` at the repo root.
 
-Because every module ends up in one shared IIFE scope, top-level `function foo(...)` declarations from different modules collide silently — a later definition overrides an earlier one with the same name, and the symptom (a caller invoking a function with the wrong signature) is hard to debug from runtime alone. `scripts/build.js` runs `checkForDuplicateTopLevelFunctions` over the stripped sources before writing the bundle and fails the build if it finds a collision. **Function names must be unique across `src/features/*.js`.** Local helpers that conceptually overlap should be named explicitly for their input (e.g. `getCurrentItemIdFromUrl` vs `getItemIdFromLinkHref`).
+Because every module ends up in one shared IIFE scope, top-level `function foo(...)` declarations from different modules collide silently — a later definition overrides an earlier one with the same name, and the symptom (a caller invoking a function with the wrong signature) is hard to debug from runtime alone. `scripts/build.js` runs `checkForDuplicateTopLevelFunctions` over the stripped sources before writing the bundle and fails the build if it finds a collision. **Function names must be unique across `src/features/*.js`.** When the same helper genuinely belongs in two or more modules, extract it to `src/dom.js` (or `src/parsing.js` if it's pure) — `getItemPageId` lives in `dom.js` for exactly that reason. When two helpers are conceptually similar but read different inputs, name them explicitly for their input (e.g. `getItemPageId` reading `window.location.search` vs `getItemIdFromLinkHref` reading a hovered anchor's `href`).
 
 The `@version` field embeds the current commit's git short hash (`0.10+abc1234`) so the userscript metadata in Tampermonkey/Violentmonkey is enough to identify which commit is loaded. CI's "is `script.js` up to date" diff uses `git diff -I '^// @version'` to ignore hunks consisting entirely of @version-line changes, since the committed-script.js's hash and a fresh CI build's hash always differ by one commit.
 

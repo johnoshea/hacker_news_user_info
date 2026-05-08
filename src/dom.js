@@ -26,3 +26,14 @@ export function findCommentParent(usernameEl) {
 export function isItemPage() {
 	return window.location.pathname === "/item";
 }
+
+// Read the item id from the current page's `?id=` URL parameter, or
+// null if absent. Pairs with `isItemPage()` — both inspect
+// `window.location` so they live together. Centralising here also
+// dodges the build script's duplicate-function-name check, which
+// otherwise forces each feature module to spell its own copy with a
+// distinct name (see `scripts/build.js`).
+export function getItemPageId() {
+	const params = new URLSearchParams(window.location.search);
+	return params.get("id") || null;
+}

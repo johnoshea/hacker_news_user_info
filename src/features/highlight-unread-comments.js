@@ -15,17 +15,8 @@
 // be invisible there.)
 
 import { READ_COMMENTS_TTL_MS } from "../config.js";
+import { getItemPageId } from "../dom.js";
 import { findNewCommentIds } from "../parsing.js";
-
-// Read the item id from the current page's URL. Distinct from
-// item-info-hover's same-purpose helper, which reads from a hovered
-// link's href. The build concatenates every module into one IIFE, so
-// function names must be unique across src/features/*.js — same-name
-// declarations would silently override each other.
-function getCurrentItemIdFromUrl() {
-	const params = new URLSearchParams(window.location.search);
-	return params.get("id") || null;
-}
 
 function getCurrentCommentIds() {
 	return Array.from(document.querySelectorAll("tr.comtr"))
@@ -34,7 +25,7 @@ function getCurrentCommentIds() {
 }
 
 export function setupHighlightUnreadComments({ store }) {
-	const itemId = getCurrentItemIdFromUrl();
+	const itemId = getItemPageId();
 	if (!itemId) return;
 
 	const now = Date.now();

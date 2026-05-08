@@ -9,16 +9,11 @@
 // first watched comment. Disabled state is recomputed after every
 // click so a single-watch thread can never click `↑ watch`.
 
-import { h, isItemPage } from "../dom.js";
-
-function getItemIdFromCommentNavUrl() {
-	const params = new URLSearchParams(window.location.search);
-	return params.get("id") || null;
-}
+import { getItemPageId, h, isItemPage } from "../dom.js";
 
 export function setupWatchedCommentNav({ store, toolbar }) {
 	if (!isItemPage()) return;
-	const itemId = getItemIdFromCommentNavUrl();
+	const itemId = getItemPageId();
 	if (!itemId) return;
 
 	// Resolve every on-page row for a watch in this thread, in DOM
