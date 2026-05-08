@@ -113,3 +113,46 @@ test("store: updateWatchKids is a no-op on missing entry", () => {
 	store.updateWatchKids("c1", ["r1"], 9_999); // does not throw
 	assert.equal(store.getWatchedComment("c1"), null);
 });
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WATCH_TTL = 14 * DAY_MS;
+
+test("store: pruneWatchedComments drops entries past the TTL", () => {
+	const store = createStore(makeFakeBackend());
+	const now = 1_000_000_000_000;
+	store.setWatchedComment("fresh", {
+		itemId: "i1",
+		seenKids: [],
+		latestKids: [],
+		lastCheckedAt: now,
+		addedAt: now - DAY_MS,
+	});
+	store.setWatchedComment("stale", {
+		itemId: "i2",
+		seenKids: [],
+		latestKids: [],
+		lastCheckedAt: now - 15 * DAY_MS,
+		addedAt: now - 15 * DAY_MS,
+	});
+	store.pruneWatchedComments(now, WATCH_TTL);
+	assert.equal(store.getWatchedComment("fresh") !== null, true);
+	assert.equal(store.getWatchedComment("stale"), null);
+});
+
+test("store: pruneWatchedComments is a no-op when nothing is stale", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	const now = 1_000_000_000_000;
+	store.setWatchedComment("c1", {
+		itemId: "i1",
+		seenKids: [],
+		latestKids: [],
+		lastCheckedAt: now,
+		addedAt: now,
+	});
+	const before = backend.data;
+	store.pruneWatchedComments(now, WATCH_TTL);
+	// Method returns nothing observable when nothing is pruned;
+	// confirm the entry is still there.
+	assert.equal(store.getWatchedComment("c1") !== null, true);
+});

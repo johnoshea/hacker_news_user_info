@@ -9,7 +9,7 @@ import {
 	STATE_KEY,
 	STATE_SCHEMA_VERSION,
 } from "./config.js";
-import { pruneExpiredReadComments } from "./parsing.js";
+import { pruneExpiredReadComments, pruneExpiredWatches } from "./parsing.js";
 
 export function emptyState() {
 	return {
@@ -239,6 +239,18 @@ export function createStore(backend) {
 				if (!e) return false;
 				e.latestKids = (kids || []).slice();
 				e.lastCheckedAt = nowMs;
+			});
+		},
+		// Drop expired entries from the watchedComments map. Run periodically
+		// so a watch that hasn't been checked in >14 days is cleaned up.
+		pruneWatchedComments(nowMs, ttlMs) {
+			mutate((s) => {
+				const before = s.watchedComments || {};
+				const after = pruneExpiredWatches(before, nowMs, ttlMs);
+				if (Object.keys(after).length === Object.keys(before).length) {
+					return false;
+				}
+				s.watchedComments = after;
 			});
 		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
