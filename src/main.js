@@ -23,6 +23,7 @@ import { setupUserInfoHover } from "./features/user-info-hover.js";
 import { createUserRender } from "./features/user-render.js";
 import { setupWatchToggles } from "./features/watch-toggles.js";
 import { setupWatchedCommentNav } from "./features/watched-comment-nav.js";
+import { setupWatchedListingHighlights } from "./features/watched-listing-highlights.js";
 import { createStore, migrateLegacyKeys } from "./state.js";
 import { STYLES } from "./styles.js";
 
@@ -80,6 +81,7 @@ transformQuotes();
 // pathname, sort by table.itemlist presence), so call unconditionally.
 setupLinkifyUserAbout();
 setupSortStories();
+setupWatchedListingHighlights({ store, fetchItem });
 
 if (isItemPage()) {
 	setupCommentBoxToggle();

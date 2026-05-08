@@ -64,6 +64,7 @@ const SOURCES = [
 	"src/features/user-render.js",
 	"src/features/watch-toggles.js",
 	"src/features/watched-comment-nav.js",
+	"src/features/watched-listing-highlights.js",
 	"src/features/tag-manager.js",
 	"src/features/toolbar.js",
 	"src/main.js",
