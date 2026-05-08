@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { watchHasNewReplies } from "../src/parsing.js";
+import { watchHasNewReplies, isWatchCheckStale } from "../src/parsing.js";
 
 // The watch-for-replies feature stores `seenKids` (replies the user has
 // acknowledged by visiting the comment page) and `latestKids` (replies
@@ -34,4 +34,46 @@ test("watchHasNewReplies: defensive against null/undefined", () => {
 	assert.equal(watchHasNewReplies(undefined, undefined), false);
 	assert.equal(watchHasNewReplies(null, ["a"]), true);
 	assert.equal(watchHasNewReplies(["a"], null), false);
+});
+
+const MIN_MS = 60 * 1000;
+const THROTTLE_MS = 30 * MIN_MS;
+
+test("isWatchCheckStale: just-checked entry is fresh", () => {
+	const now = 1_000_000_000_000;
+	assert.equal(
+		isWatchCheckStale({ lastCheckedAt: now }, now, THROTTLE_MS),
+		false,
+	);
+});
+
+test("isWatchCheckStale: exactly throttle-old is fresh (boundary)", () => {
+	const now = 1_000_000_000_000;
+	assert.equal(
+		isWatchCheckStale({ lastCheckedAt: now - THROTTLE_MS }, now, THROTTLE_MS),
+		false,
+	);
+});
+
+test("isWatchCheckStale: well past throttle is stale", () => {
+	const now = 1_000_000_000_000;
+	assert.equal(
+		isWatchCheckStale(
+			{ lastCheckedAt: now - THROTTLE_MS - 1 },
+			now,
+			THROTTLE_MS,
+		),
+		true,
+	);
+});
+
+test("isWatchCheckStale: missing entry / lastCheckedAt is stale", () => {
+	const now = 1_000_000_000_000;
+	assert.equal(isWatchCheckStale(null, now, THROTTLE_MS), true);
+	assert.equal(isWatchCheckStale(undefined, now, THROTTLE_MS), true);
+	assert.equal(isWatchCheckStale({}, now, THROTTLE_MS), true);
+	assert.equal(
+		isWatchCheckStale({ lastCheckedAt: "not a number" }, now, THROTTLE_MS),
+		true,
+	);
 });

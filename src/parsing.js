@@ -235,3 +235,12 @@ export function watchHasNewReplies(seenKids, latestKids) {
 	}
 	return false;
 }
+
+// True iff lastCheckedAt is older than nowMs - throttleMs (i.e. due
+// for a fresh API recheck). A missing entry, missing lastCheckedAt,
+// or non-numeric lastCheckedAt is treated as stale so the very first
+// recheck always fires.
+export function isWatchCheckStale(entry, nowMs, throttleMs) {
+	if (!entry || typeof entry.lastCheckedAt !== "number") return true;
+	return nowMs - entry.lastCheckedAt > throttleMs;
+}
