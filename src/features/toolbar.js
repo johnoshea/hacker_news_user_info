@@ -6,6 +6,8 @@ import { h } from "../dom.js";
 import { parseImport, stateToExport } from "../state.js";
 
 export function createToolbar({ store, backend }) {
+	let buttonsContainer = null;
+
 	function exportState() {
 		const data = stateToExport(store._snapshot());
 		const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -51,7 +53,7 @@ export function createToolbar({ store, backend }) {
 
 	function mount() {
 		const dragHandle = h("div", { class: "hn-drag-handle" });
-		const buttons = h("div", { class: "hn-toolbar-buttons" }, [
+		buttonsContainer = h("div", { class: "hn-toolbar-buttons" }, [
 			h("button", {
 				class: "hn-toolbar-btn",
 				text: "Save state",
@@ -63,7 +65,10 @@ export function createToolbar({ store, backend }) {
 				onclick: importState,
 			}),
 		]);
-		const toolbar = h("div", { class: "hn-toolbar" }, [dragHandle, buttons]);
+		const toolbar = h("div", { class: "hn-toolbar" }, [
+			dragHandle,
+			buttonsContainer,
+		]);
 		document.body.appendChild(toolbar);
 
 		// Drag listeners live only for the duration of a drag, rather than
@@ -88,5 +93,12 @@ export function createToolbar({ store, backend }) {
 		});
 	}
 
-	return { mount };
+	// Returns the buttons container after mount() runs, or null before.
+	// External features (e.g. watched-comment-nav) use it to append
+	// their own toolbar buttons without knowing the toolbar's internals.
+	function getButtonsContainer() {
+		return buttonsContainer;
+	}
+
+	return { mount, getButtonsContainer };
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.10+ce9ae67
+// @version      0.10+975ce60
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -307,6 +307,62 @@ function parseTagInput(text) {
 	return out;
 }
 
+// True iff `latestKids` contains an id not present in `seenKids`. Used
+// by the watch-for-replies feature to decide whether a watched comment
+// has new replies that the user has not yet acknowledged. Both inputs
+// may be null/undefined (treated as empty).
+function watchHasNewReplies(seenKids, latestKids) {
+	const seen = new Set(seenKids || []);
+	for (const id of latestKids || []) {
+		if (!seen.has(id)) return true;
+	}
+	return false;
+}
+
+// True iff lastCheckedAt is older than nowMs - throttleMs (i.e. due
+// for a fresh API recheck). A missing entry, missing lastCheckedAt,
+// or non-numeric lastCheckedAt is treated as stale so the very first
+// recheck always fires.
+function isWatchCheckStale(entry, nowMs, throttleMs) {
+	if (!entry || typeof entry.lastCheckedAt !== "number") return true;
+	return nowMs - entry.lastCheckedAt > throttleMs;
+}
+
+// Return a new map containing only the watches that are still within
+// the TTL (addedAt within ttlMs of now). A missing or non-numeric
+// addedAt is treated as expired — defensive against malformed entries
+// from a botched import or a forward-incompatible schema change.
+function pruneExpiredWatches(map, nowMs, ttlMs) {
+	const out = {};
+	for (const [commentId, entry] of Object.entries(map || {})) {
+		if (!entry || typeof entry.addedAt !== "number") continue;
+		if (nowMs - entry.addedAt <= ttlMs) {
+			out[commentId] = entry;
+		}
+	}
+	return out;
+}
+
+// Group a watchedComments map by itemId, attaching the derived
+// `hasNew` flag to each entry. Used by the listing-page highlight
+// pass to look up "are there any watched comments with new replies
+// in this story's thread?" in one keyed lookup per row.
+//
+// Returns: { [itemId]: [{ commentId, hasNew }, ...] }
+//
+// Entries missing an itemId are skipped (a malformed entry shouldn't
+// crash the listing-page pass).
+function watchesByItemId(map) {
+	const out = {};
+	for (const [commentId, entry] of Object.entries(map || {})) {
+		if (!entry || typeof entry.itemId !== "string") continue;
+		const hasNew = watchHasNewReplies(entry.seenKids, entry.latestKids);
+		if (!out[entry.itemId]) out[entry.itemId] = [];
+		out[entry.itemId].push({ commentId, hasNew });
+	}
+	return out;
+}
+
 
 // ===== src/state.js =====
 
@@ -321,7 +377,8 @@ function emptyState() {
 		colors: {}, // tagName  -> { bgColor, textColor }
 		cache: {}, // username -> { created, karma, fetchedAt }
 		readComments: {}, // itemId -> { ids: [...], fetchedAt }
-		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, fetchedAt }
+		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, kids, fetchedAt }
+		watchedComments: {}, // commentId -> { itemId, seenKids, latestKids, lastCheckedAt, addedAt }
 	};
 }
 
@@ -490,6 +547,70 @@ function createStore(backend) {
 				s.readComments = after;
 			});
 		},
+		// Watched-comments map for the watch-for-replies feature. Keyed
+		// by HN comment id; each entry stores the parent itemId (so the
+		// listing-page pass can look up "any watched comments in this
+		// story?"), the `seenKids` snapshot of replies the user has
+		// acknowledged, the `latestKids` from the most recent API check,
+		// and timestamps driving the recheck throttle and TTL prune.
+		getWatchedComments() {
+			return load().watchedComments || {};
+		},
+		getWatchedComment(commentId) {
+			const map = load().watchedComments || {};
+			return map[commentId] || null;
+		},
+		setWatchedComment(commentId, entry) {
+			mutate((s) => {
+				s.watchedComments[commentId] = {
+					itemId: entry.itemId,
+					seenKids: (entry.seenKids || []).slice(),
+					latestKids: (entry.latestKids || []).slice(),
+					lastCheckedAt: entry.lastCheckedAt,
+					addedAt: entry.addedAt,
+				};
+			});
+		},
+		removeWatchedComment(commentId) {
+			mutate((s) => {
+				if (!s.watchedComments?.[commentId]) return false;
+				delete s.watchedComments[commentId];
+			});
+		},
+		// Sync seenKids to latestKids — i.e. acknowledge every reply the
+		// most recent API check returned. Called when the user lands on
+		// the item page where a watched comment is rendered.
+		markWatchSeen(commentId, _nowMs) {
+			mutate((s) => {
+				const e = s.watchedComments?.[commentId];
+				if (!e) return false;
+				e.seenKids = (e.latestKids || []).slice();
+			});
+		},
+		// Replace latestKids with a fresh API result and stamp the check
+		// timestamp. Doesn't touch seenKids — the watch retains its
+		// "what's new since I last looked" notion until the user visits
+		// the item page.
+		updateWatchKids(commentId, kids, nowMs) {
+			mutate((s) => {
+				const e = s.watchedComments?.[commentId];
+				if (!e) return false;
+				e.latestKids = (kids || []).slice();
+				e.lastCheckedAt = nowMs;
+			});
+		},
+		// Drop expired entries from the watchedComments map. Run periodically
+		// so a watch that hasn't been checked in >14 days is cleaned up.
+		pruneWatchedComments(nowMs, ttlMs) {
+			mutate((s) => {
+				const before = s.watchedComments || {};
+				const after = pruneExpiredWatches(before, nowMs, ttlMs);
+				if (Object.keys(after).length === Object.keys(before).length) {
+					return false;
+				}
+				s.watchedComments = after;
+			});
+		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
 			mutate((s) => {
 				s.tags = tagsByUser;
@@ -592,7 +713,7 @@ function parseImport(data) {
 	if (!data || typeof data !== "object") return state;
 
 	// Normalized format.
-	if (data.customTags || data.users) {
+	if (data.customTags || data.users || data.watches) {
 		if (data.customTags && typeof data.customTags === "object") {
 			for (const [tagName, info] of Object.entries(data.customTags)) {
 				if (info?.bgColor) {
@@ -612,6 +733,21 @@ function parseImport(data) {
 				if (Array.isArray(userData.tags)) {
 					state.tags[username] = userData.tags.slice();
 				}
+			}
+		}
+		if (data.watches && typeof data.watches === "object") {
+			for (const [commentId, entry] of Object.entries(data.watches)) {
+				if (!entry || typeof entry.itemId !== "string") continue;
+				state.watchedComments[commentId] = {
+					itemId: entry.itemId,
+					seenKids: Array.isArray(entry.seenKids) ? entry.seenKids.slice() : [],
+					latestKids: Array.isArray(entry.latestKids)
+						? entry.latestKids.slice()
+						: [],
+					lastCheckedAt:
+						typeof entry.lastCheckedAt === "number" ? entry.lastCheckedAt : 0,
+					addedAt: typeof entry.addedAt === "number" ? entry.addedAt : 0,
+				};
 			}
 		}
 		return state;
@@ -664,8 +800,9 @@ function parseImport(data) {
 }
 
 // Normalized export shape. Stable across versions so old backups stay
-// interoperable. Cache is intentionally dropped - it's perf scaffolding,
-// not user data, and shouldn't bloat export files.
+// interoperable. Cache is intentionally dropped — it's perf scaffolding,
+// not user data, and shouldn't bloat export files. `watches` is user
+// data (a deliberate user choice), so it ships in exports.
 function stateToExport(state) {
 	const customTags = {};
 	for (const [tagName, info] of Object.entries(state.colors || {})) {
@@ -685,7 +822,20 @@ function stateToExport(state) {
 		if (rating === 0 && tags.length === 0) continue;
 		users[username] = { rating, tags: tags.slice() };
 	}
-	return { customTags, users };
+	const watches = {};
+	for (const [commentId, entry] of Object.entries(
+		state.watchedComments || {},
+	)) {
+		if (!entry || typeof entry.itemId !== "string") continue;
+		watches[commentId] = {
+			itemId: entry.itemId,
+			seenKids: (entry.seenKids || []).slice(),
+			latestKids: (entry.latestKids || []).slice(),
+			lastCheckedAt: entry.lastCheckedAt,
+			addedAt: entry.addedAt,
+		};
+	}
+	return { customTags, users, watches };
 }
 
 // Returns a new state with every user's `oldName` tag replaced by `newName`
@@ -1414,9 +1564,17 @@ function createApi({ store }) {
 		return promise;
 	}
 
-	function fetchItem(itemId) {
-		const cached = store.getCachedItem(itemId, Date.now(), ITEM_CACHE_TTL_MS);
-		if (cached) return Promise.resolve(cached);
+	// `fresh: true` skips the persistent cache read but still participates
+	// in inflight-dedup and still writes the cache on resolve. Used by
+	// the watch-for-replies feature, where the 6h cache would otherwise
+	// shadow the 30-min recheck throttle. Hover-popup callers leave the
+	// default in place — title/score/karma drift slowly enough that the
+	// 6h cache is fine for them.
+	function fetchItem(itemId, { fresh = false } = {}) {
+		if (!fresh) {
+			const cached = store.getCachedItem(itemId, Date.now(), ITEM_CACHE_TTL_MS);
+			if (cached) return Promise.resolve(cached);
+		}
 		if (itemInflight.has(itemId)) return itemInflight.get(itemId);
 
 		const promise = new Promise((resolve) => {
@@ -1445,6 +1603,10 @@ function createApi({ store }) {
 							time: typeof data.time === "number" ? data.time : 0,
 							text: data.text || "",
 							type: data.type || "story",
+							// Direct replies. Used by the watch-for-replies feature
+							// to detect new replies on a watched comment without
+							// loading the full comment page. Hover popup ignores it.
+							kids: Array.isArray(data.kids) ? data.kids.slice() : [],
 						};
 						store.setCachedItem(itemId, digest, Date.now());
 						resolve(digest);
@@ -3154,6 +3316,8 @@ function createTagManager({ store, rerenderUserTags }) {
 // Floating toolbar with Save state / Restore state buttons. Mounted on
 // item pages.
 function createToolbar({ store, backend }) {
+	let buttonsContainer = null;
+
 	function exportState() {
 		const data = stateToExport(store._snapshot());
 		const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -3199,7 +3363,7 @@ function createToolbar({ store, backend }) {
 
 	function mount() {
 		const dragHandle = h("div", { class: "hn-drag-handle" });
-		const buttons = h("div", { class: "hn-toolbar-buttons" }, [
+		buttonsContainer = h("div", { class: "hn-toolbar-buttons" }, [
 			h("button", {
 				class: "hn-toolbar-btn",
 				text: "Save state",
@@ -3211,7 +3375,10 @@ function createToolbar({ store, backend }) {
 				onclick: importState,
 			}),
 		]);
-		const toolbar = h("div", { class: "hn-toolbar" }, [dragHandle, buttons]);
+		const toolbar = h("div", { class: "hn-toolbar" }, [
+			dragHandle,
+			buttonsContainer,
+		]);
 		document.body.appendChild(toolbar);
 
 		// Drag listeners live only for the duration of a drag, rather than
@@ -3236,7 +3403,14 @@ function createToolbar({ store, backend }) {
 		});
 	}
 
-	return { mount };
+	// Returns the buttons container after mount() runs, or null before.
+	// External features (e.g. watched-comment-nav) use it to append
+	// their own toolbar buttons without knowing the toolbar's internals.
+	function getButtonsContainer() {
+		return buttonsContainer;
+	}
+
+	return { mount, getButtonsContainer };
 }
 
 
