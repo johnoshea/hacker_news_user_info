@@ -279,3 +279,11 @@ export function watchesByItemId(map) {
 	}
 	return out;
 }
+
+// True iff this author's rating crosses the auto-collapse threshold.
+// Threshold is expected to be negative; a rating of 0 (the default
+// for an unrated user) must never collapse. Boundary is inclusive —
+// a rating equal to the threshold counts as "low score".
+export function shouldAutoCollapseAuthor(rating, threshold) {
+	return rating <= threshold;
+}

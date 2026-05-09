@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+3ccfd34
+// @version      0.11+df58d2d
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -369,6 +369,14 @@ function watchesByItemId(map) {
 		out[entry.itemId].push({ commentId, hasNew });
 	}
 	return out;
+}
+
+// True iff this author's rating crosses the auto-collapse threshold.
+// Threshold is expected to be negative; a rating of 0 (the default
+// for an unrated user) must never collapse. Boundary is inclusive —
+// a rating equal to the threshold counts as "low score".
+function shouldAutoCollapseAuthor(rating, threshold) {
+	return rating <= threshold;
 }
 
 
