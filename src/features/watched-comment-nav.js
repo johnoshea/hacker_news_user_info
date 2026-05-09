@@ -1,7 +1,9 @@
 // Toolbar prev/next-watched-comment navigation. Runs after
 // toolbar.mount() on item pages. Adds two buttons to the toolbar's
-// button container when at least one watched comment is present on
-// this page; otherwise mounts nothing.
+// button container when at least one watched comment WITH new replies
+// is present on this page; otherwise mounts nothing — the nav exists
+// to surface activity, so a watched comment with no new replies is
+// not a useful target.
 //
 // "Current position" is tracked as a closure-local index into the
 // list of watched-comment rows, in document order. Initial value -1
@@ -10,19 +12,23 @@
 // click so a single-watch thread can never click `↑ watch`.
 
 import { getItemPageId, h, isItemPage } from "../dom.js";
+import { watchHasNewReplies } from "../parsing.js";
 
 export function setupWatchedCommentNav({ store, toolbar }) {
 	if (!isItemPage()) return;
 	const itemId = getItemPageId();
 	if (!itemId) return;
 
-	// Resolve every on-page row for a watch in this thread, in DOM
-	// order. Watches whose comment id isn't on this page (e.g. on a
-	// later "more" page) are dropped.
+	// Resolve every on-page row for a watch in this thread that has
+	// new replies, in DOM order. Watches whose comment id isn't on this
+	// page (e.g. on a later "more" page) are dropped, and watches with
+	// no new replies are dropped — the nav targets only "show me
+	// what's new" comments.
 	const watches = store.getWatchedComments();
 	const rows = [];
 	for (const [commentId, entry] of Object.entries(watches)) {
 		if (entry.itemId !== itemId) continue;
+		if (!watchHasNewReplies(entry.seenKids, entry.latestKids)) continue;
 		const row = document.getElementById(commentId);
 		if (row) rows.push(row);
 	}

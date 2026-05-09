@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+a5c3269
+// @version      0.11+cdb94ec
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -74,10 +74,14 @@ const HOVER_DWELL_MS = 250;
 const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 // Minimum interval between API rechecks of a single watched comment.
-// 30 minutes balances freshness ("new reply just arrived") against
-// load (each watched comment fires one tiny JSON request per session
-// per throttle window, behind fetchItem's inflight-dedup map).
-const WATCH_RECHECK_THROTTLE_MS = 30 * 60 * 1000;
+// 60 seconds is short enough that the listing-page highlight reflects
+// new replies on the very next page load after they arrive (anything
+// longer leaves the user staring at an unflagged comments link while
+// the throttle still applies from the most recent item-page sync), and
+// long enough to dedup tight reload spam. Each request is a tiny JSON
+// behind fetchItem's inflight-dedup map, so the load impact is small
+// even with several active watches.
+const WATCH_RECHECK_THROTTLE_MS = 60 * 1000;
 
 // Authors whose stored rating sits at or below this value have their
 // comments auto-collapsed on render. Rating defaults to 0, so the
@@ -3378,8 +3382,10 @@ function setupWatchToggles({ store, fetchItem }) {
 
 // Toolbar prev/next-watched-comment navigation. Runs after
 // toolbar.mount() on item pages. Adds two buttons to the toolbar's
-// button container when at least one watched comment is present on
-// this page; otherwise mounts nothing.
+// button container when at least one watched comment WITH new replies
+// is present on this page; otherwise mounts nothing — the nav exists
+// to surface activity, so a watched comment with no new replies is
+// not a useful target.
 //
 // "Current position" is tracked as a closure-local index into the
 // list of watched-comment rows, in document order. Initial value -1
@@ -3391,13 +3397,16 @@ function setupWatchedCommentNav({ store, toolbar }) {
 	const itemId = getItemPageId();
 	if (!itemId) return;
 
-	// Resolve every on-page row for a watch in this thread, in DOM
-	// order. Watches whose comment id isn't on this page (e.g. on a
-	// later "more" page) are dropped.
+	// Resolve every on-page row for a watch in this thread that has
+	// new replies, in DOM order. Watches whose comment id isn't on this
+	// page (e.g. on a later "more" page) are dropped, and watches with
+	// no new replies are dropped — the nav targets only "show me
+	// what's new" comments.
 	const watches = store.getWatchedComments();
 	const rows = [];
 	for (const [commentId, entry] of Object.entries(watches)) {
 		if (entry.itemId !== itemId) continue;
+		if (!watchHasNewReplies(entry.seenKids, entry.latestKids)) continue;
 		const row = document.getElementById(commentId);
 		if (row) rows.push(row);
 	}
