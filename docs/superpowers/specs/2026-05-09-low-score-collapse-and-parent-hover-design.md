@@ -45,7 +45,7 @@ Cross-tab score changes are picked up by the existing `GM_addValueChangeListener
 | Event | What runs | What changes on the page |
 |---|---|---|
 | Page load | `setupAutoCollapseLowScore` reads `state.ratings`, walks every comment, applies marker classes for low-score authors. | Affected rows render collapsed with the `[low score]` tag. |
-| User clicks `▲`/`▼` on a comment | `rerenderUserRatings(username)` (extended) recomputes the collapse for every row by that user. | Affected rows collapse or expand to match the new rating. |
+| User clicks `▲`/`▼` on a comment | `rerenderUserRatings(username)` (extended) recomputes the collapse for every row by that user, syncing both the `.hn-low-score` class and the `[low score]` comhead marker. | Affected rows collapse or expand to match the new rating; the marker appears/disappears in lockstep. |
 | User clicks the indent gutter on a score-managed row | `setupClickIndentToggle`'s handler (extended) toggles the score-expand state. | That single row toggles between collapsed and expanded. |
 | Cross-tab rating write | Cross-tab listener calls `rerenderUserRatings(username)`. | Same as the local rating click. |
 
