@@ -59,6 +59,7 @@ const SOURCES = [
 	"src/features/hover-popup.js",
 	"src/features/user-info-hover.js",
 	"src/features/item-info-hover.js",
+	"src/features/parent-hover.js",
 	"src/features/linkify-user-about.js",
 	"src/features/sort-stories.js",
 	"src/features/reply-inline.js",
