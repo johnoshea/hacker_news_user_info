@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 
 1. **Site-wide legibility layer** (every HN page, `news.ycombinator.com/*`): font reset, sizing, gutters, full-width main, downvoted-comment restyling (black-on-faint-grey), quoted-text rendering (`>`-prefixed text wrapped in `<p class="quote">` with HN-orange accents), and `.rank` hidden. CSS comes from a `:root` block with `--colour-hn-orange`, `--colour-hn-orange-pale`, `--gutter`, and `--border-radius` tokens. Adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
-2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, "toggle all" link on the fatitem subtext, backtick-wrapped text rendered as `<code>`, highlight for comments new since last visit, hover-on-cited-item popup, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, a "show comment box" toggle that collapses the page-bottom comment-submit form, and a per-comment "watch for replies" toggle (eye icon) with toolbar prev/next nav between watched comments.
+2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, "toggle all" link on the fatitem subtext, backtick-wrapped text rendered as `<code>`, highlight for comments new since last visit, hover-on-cited-item popup, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, a "show comment box" toggle that collapses the page-bottom comment-submit form, a per-comment "watch for replies" toggle (eye icon) with toolbar prev/next nav between watched comments, per-comment auto-collapse for users rated `<= -10` (with a `[low score]` marker in the comhead and click-the-gutter to expand), and a parent-link hover popup that previews the parent comment's body.
 3. **Hover-on-username popup** runs on every HN page (except `/user`, where you're already looking at the profile): hovering any `.hnuser` for the dwell period (250ms) shows a popup with their account age, karma, and about-text snippet, fetched once and cached for 6h.
 4. **Listing-page enhancements** (any page whose story table is found by `getStoryListTable()` in `src/dom.js` — anchors off a `tr.athing.submission` row, excluding the item-page fatitem header): a "sort: …" dropdown re-orders the story list in place — `default` / `time` / `score` / `ratio`, plus a `reverse` link.
 5. **`/user` page enhancement**: plain-text URLs and email addresses in the about cell get turned into clickable links.
@@ -30,12 +30,14 @@ After any edit under `src/`, run `just build` (or `just check`) so `script.js` s
 
 ```
 src/
-  config.js                  Storage key, schema version, TTL/timeout constants
+  config.js                  Storage key, schema version, TTL/timeout/threshold constants
   parsing.js                 Pure helpers: timeSince, stripLeadingQuoteMarker, parseTagInput,
                              findCommentRootIndices, splitBackticks,
                              findNewCommentIds, isReadCommentEntryFresh,
                              pruneExpiredReadComments, truncateText, extractDomain,
-                             linkifySegments, sortStoriesBy
+                             linkifySegments, sortStoriesBy,
+                             shouldAutoCollapseAuthor, parseParentIdFromHref,
+                             splitHtmlIntoParagraphs
   state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
   dom.js                     h() factory, findCommentParent, isItemPage, getItemPageId,
@@ -54,11 +56,19 @@ src/
                              gated per-comment "[toggle replies]" link via config flag
     highlight-unread-comments.js setupHighlightUnreadComments: tints td.ind on comments
                              that weren't on the page last time you visited this item
+    auto-collapse-low-score.js  setupAutoCollapseLowScore: tags every tr.comtr with
+                             data-hn-author and applies .hn-low-score on rows whose
+                             author's rating is <= LOW_SCORE_COLLAPSE_THRESHOLD;
+                             appends "[low score]" tag to the comhead
     hover-popup.js           createHoverPopup factory: shared {show, hide, attachDwell}
                              primitive used by both hover features
     user-info-hover.js       setupUserInfoHover: hover any .hnuser for an account-info popup
     item-info-hover.js       setupItemInfoHover: hover an /item?id= link inside .commtext
                              for the cited item's title/score/author/comment-count preview
+    parent-hover.js          setupParentHover: hovers on the "parent" link in each
+                             comhead show the parent comment's body in the shared
+                             popup; DOM-first with fetchItem fallback for off-page
+                             parents (deep subtrees, story parents)
     linkify-user-about.js    setupLinkifyUserAbout: on /user pages, replaces plain-text
                              URLs / emails in the about cell with clickable <a> elements
     sort-stories.js          setupSortStories: dropdown above the listing
@@ -152,6 +162,22 @@ A handful of small DOM passes that make the comment tree easier to read and fast
 `setupHighlightUnreadComments({ store })` (in `src/features/highlight-unread-comments.js`) reads the current page's comment IDs (from `tr.comtr[id]`), compares them against the IDs we stored on the previous visit to the same item under `state.readComments[itemId]`, and adds the `.hn-new-comment` class to the `tr.comtr` row of any ID that wasn't there before. (The class lives on the row rather than `td.ind` because the indent cell collapses to ~0 width on root-level comments, leaving any background paint invisible there.) The first visit to a thread doesn't highlight anything (there's nothing to compare against) but does store the ID list so the next visit can. Stale entries (older than `READ_COMMENTS_TTL_MS` = 3 days) are pruned on every item-page load via `store.pruneReadComments`. The pure helpers `findNewCommentIds`, `isReadCommentEntryFresh`, and `pruneExpiredReadComments` live in `src/parsing.js` and are unit-tested.
 
 The remaining tweaks (dead-comment recolour, indent-gutter separator, `<pre>` and inline `<code>` background) are CSS-only — see the rules at the bottom of `src/styles.js`. They piggyback on HN's own classes (`.commtext.cdd` for dead, `tr.comtr td.ind` for the gutter) so no JS pass is needed.
+
+### Auto-collapse low-score authors (`src/features/auto-collapse-low-score.js`)
+
+`setupAutoCollapseLowScore({ store })` runs once per item-page load. It walks every `tr.comtr`, tags each with `data-hn-author=<username>` (so `rerenderUserRatings` can later target rows by author via the same `[data-hn-...]` selector pattern that the rest of the code uses), and adds the `.hn-low-score` class to rows whose author's stored rating is `<= LOW_SCORE_COLLAPSE_THRESHOLD` (`-10`, in `src/config.js`). A faint `[low score]` marker is appended to the comhead next to the existing `[collapse root]` link so the empty body has a visible reason.
+
+The CSS in `src/styles.js` hides `.commtext` and `.reply` for `.hn-low-score` rows; the toggle marker `.hn-low-score-expanded` (added by `setupClickIndentToggle`'s click handler) reverts the hide on a single row at a time. Replies — which are separate `tr.comtr` rows at greater indent — are unaffected, which is the whole point of using a custom collapse rather than HN's native subtree toggle.
+
+`rerenderUserRatings` (in `user-render.js`) is extended to apply or remove `.hn-low-score` (and clear `.hn-low-score-expanded`) on every row by the user when their rating changes, and to keep the `[low score]` comhead marker in lockstep with the class. Cross-tab rating writes flow through the same `rerenderUserRatings` call site that the existing per-user fan-out uses, so there's no second sync mechanism.
+
+### Parent-link hover popup (`src/features/parent-hover.js`)
+
+`setupParentHover({ fetchItem, popup })` finds every `parent` link in `span.comhead` and wires `popup.attachDwell` so a hover beyond `HOVER_DWELL_MS` opens the shared popup with the parent's body. Source resolution is DOM-first: `document.getElementById(parentId)` against the on-page comment table, falling back to `fetchItem(parentId)` (the same cache the cited-item hover uses) when the parent isn't rendered on the current page. The body is split into paragraphs by `splitHtmlIntoParagraphs` (in `src/parsing.js`), the first two are rendered, and an ellipsis line is appended when more were dropped. Author, timestamp, and score are deliberately omitted — the popup is a body-text reminder, not a metadata view.
+
+Story parents (the case for top-level comments, whose `parent` link points back to the item itself) take the API path. The digest's `title` is rendered as a bold first line; the body — only present for Ask/Show — follows.
+
+The shared `createHoverPopup` primitive grows a single document-level `Escape` `keydown` listener that calls its existing `hide()` when a popup is visible, so user/item/parent hovers all inherit keyboard dismissal at no extra cost.
 
 ### User rendering (`src/features/user-render.js`)
 
