@@ -47,7 +47,9 @@ src/
   features/
     legibility.js            applyDownvotedClass, transformQuotes (run on every HN page)
     comment-box-toggle.js    setupCommentBoxToggle (item pages only)
-    click-indent-toggle.js   setupClickIndentToggle: makes td.ind a click target for a.togg
+    click-indent-toggle.js   setupClickIndentToggle: makes td.ind a click target —
+                             toggles `.hn-low-score-expanded` on score-managed rows,
+                             fires HN's native a.togg on every other row
     collapse-root-comment.js setupCollapseRootComment: appends "[collapse root]" link
                              to every non-root comment's comhead
     backticks-to-monospace.js  transformBackticksToMonospace: walks .commtext text nodes,
@@ -151,7 +153,7 @@ On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`
 
 A handful of small DOM passes that make the comment tree easier to read and faster to skim. All live under `src/features/` and are invoked once after the page loads.
 
-`setupClickIndentToggle()` (in `src/features/click-indent-toggle.js`) walks every `tr.comtr`, adds the `.hn-clickable-indent` class to its `td.ind`, and attaches a click handler that fires the row's native `a.togg`. The CSS adds `cursor: pointer` and a hover box-shadow so the gutter looks clickable.
+`setupClickIndentToggle()` (in `src/features/click-indent-toggle.js`) walks every `tr.comtr`, adds the `.hn-clickable-indent` class to its `td.ind`, and attaches a click handler that routes by class: on rows tagged `.hn-low-score` (the auto-collapse-low-score feature) it toggles `.hn-low-score-expanded` to show or hide just that comment's body; on every other row it fires the row's native `a.togg` (HN's subtree-collapse). The CSS adds `cursor: pointer` and a hover box-shadow so the gutter looks clickable.
 
 `setupCollapseRootComment()` (in `src/features/collapse-root-comment.js`) reads each comment's indent level from the width of `td.ind img` (HN renders one indent unit as 40px), passes the level array to the pure helper `findCommentRootIndices` in `src/parsing.js`, and uses the result to inject a `[collapse root]` link into every non-root comment's `span.comhead`. Clicking the link fires the root comment's `a.togg` and scrolls the page back to the (now-collapsed) root so the reader doesn't lose their place. Roots themselves don't get the link.
 
