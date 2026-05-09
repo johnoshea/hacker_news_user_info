@@ -302,3 +302,17 @@ export function parseParentIdFromHref(href) {
 		return null;
 	}
 }
+
+// Split a comment-body HTML string into paragraph-equivalent chunks.
+// HN uses <p> as a separator (not a wrapper), so we split on any
+// <p ...> tag and return the trimmed non-empty pieces. Inline markup
+// (<a>, <i>, <code>, <pre>) inside each chunk is preserved as-is —
+// the caller decides whether to render via DOMParser or treat as
+// plain text.
+export function splitHtmlIntoParagraphs(html) {
+	if (typeof html !== "string" || html === "") return [];
+	return html
+		.split(/<p\b[^>]*>/i)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+}

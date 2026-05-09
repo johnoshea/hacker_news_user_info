@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+b627a95
+// @version      0.11+99a8192
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -392,6 +392,20 @@ function parseParentIdFromHref(href) {
 	} catch {
 		return null;
 	}
+}
+
+// Split a comment-body HTML string into paragraph-equivalent chunks.
+// HN uses <p> as a separator (not a wrapper), so we split on any
+// <p ...> tag and return the trimmed non-empty pieces. Inline markup
+// (<a>, <i>, <code>, <pre>) inside each chunk is preserved as-is —
+// the caller decides whether to render via DOMParser or treat as
+// plain text.
+function splitHtmlIntoParagraphs(html) {
+	if (typeof html !== "string" || html === "") return [];
+	return html
+		.split(/<p\b[^>]*>/i)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
 }
 
 
