@@ -501,9 +501,9 @@ export const STYLES = `
       overflow: hidden;
     }
 
-    /* PR-5: sort-stories dropdown sits above table.itemlist on listing
-       pages. Match HN's subtext font size so it doesn't dominate the
-       layout. */
+    /* PR-5: sort-stories dropdown sits above the listing table on
+       listing pages. Match HN's subtext font size so it doesn't
+       dominate the layout. */
     .hn-sort-bar {
       padding: 6px 10px;
       font-size: 0.8em;

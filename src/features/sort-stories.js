@@ -1,5 +1,5 @@
 // On listing pages (/news, /newest, /ask, /show, /best, /front, etc.)
-// add a "sort: …" dropdown above table.itemlist. Selecting an option
+// add a "sort: …" dropdown above the story table. Selecting an option
 // reorders the story rows in place; a "reverse" link flips the
 // current order. Sort options:
 //   - default: HN's server-supplied rank
@@ -12,7 +12,7 @@
 // All three of these are non-persistent (per page load). The pure
 // helper sortStoriesBy in src/parsing.js does the actual ordering.
 
-import { h } from "../dom.js";
+import { getStoryListTable, h } from "../dom.js";
 import { sortStoriesBy } from "../parsing.js";
 
 const MODES = [
@@ -22,8 +22,8 @@ const MODES = [
 	{ value: "ratio", label: "comments/score ratio" },
 ];
 
-// Read each story's metadata + the 3 row group it occupies in
-// table.itemlist > tbody. HN renders each story as exactly:
+// Read each story's metadata + the 3 row group it occupies in the
+// listing table's tbody. HN renders each story as exactly:
 //   <tr class="athing">    -- title row, id=NNNN
 //   <tr>...</tr>           -- subtext row (score, by, time, comments)
 //   <tr style="height:5px">-- spacer row
@@ -65,9 +65,9 @@ function parseStoryRows(table) {
 }
 
 function rerenderStories(tbody, stories) {
-	// HN appends a "More" link as the last row of itemlist (and a
-	// matching morespace row above it). Preserve those at the end so
-	// pagination still works after reorder.
+	// HN appends a "More" link as the last row of the listing table
+	// (and a matching morespace row above it). Preserve those at the
+	// end so pagination still works after reorder.
 	const allRows = Array.from(tbody.children);
 	const moreRow = allRows[allRows.length - 1];
 	const moreSpace = allRows[allRows.length - 2];
@@ -97,7 +97,7 @@ function rerenderStories(tbody, stories) {
 }
 
 export function setupSortStories() {
-	const table = document.querySelector("table.itemlist");
+	const table = getStoryListTable();
 	if (!table) return;
 	const tbody = table.querySelector("tbody");
 	if (!tbody) return;
