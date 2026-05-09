@@ -15,6 +15,7 @@ import { createHoverPopup } from "./features/hover-popup.js";
 import { setupItemInfoHover } from "./features/item-info-hover.js";
 import { applyDownvotedClass, transformQuotes } from "./features/legibility.js";
 import { setupLinkifyUserAbout } from "./features/linkify-user-about.js";
+import { setupParentHover } from "./features/parent-hover.js";
 import { setupReplyInline } from "./features/reply-inline.js";
 import { setupSortStories } from "./features/sort-stories.js";
 import { createTagManager } from "./features/tag-manager.js";
@@ -95,6 +96,7 @@ if (isItemPage()) {
 	setupAutoCollapseLowScore({ store });
 	setupWatchToggles({ store, fetchItem });
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
+	setupParentHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
 	toolbar.mount();
 	setupWatchedCommentNav({ store, toolbar });
