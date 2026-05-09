@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+df58d2d
+// @version      0.11+b627a95
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -377,6 +377,21 @@ function watchesByItemId(map) {
 // a rating equal to the threshold counts as "low score".
 function shouldAutoCollapseAuthor(rating, threshold) {
 	return rating <= threshold;
+}
+
+// Pull the comment id from a "parent" link's href. HN serves these
+// as `item?id=12345` (relative); a base URL is supplied so the
+// pure-Node URL parser can resolve relative inputs. Returns null on
+// any parse failure or missing `id` param so the caller can decide
+// (typically: skip the popup).
+function parseParentIdFromHref(href) {
+	if (typeof href !== "string" || href === "") return null;
+	try {
+		const url = new URL(href, "https://news.ycombinator.com/");
+		return url.searchParams.get("id") || null;
+	} catch {
+		return null;
+	}
 }
 
 
