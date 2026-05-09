@@ -2,8 +2,13 @@
 // editable tag list, plus the rerender-by-user fan-out used after any
 // store write so all comments by the same author stay in sync.
 
+import { LOW_SCORE_COLLAPSE_THRESHOLD } from "../config.js";
 import { findCommentParent, h } from "../dom.js";
-import { parseTagInput, timeSince } from "../parsing.js";
+import {
+	parseTagInput,
+	shouldAutoCollapseAuthor,
+	timeSince,
+} from "../parsing.js";
 
 // Pastel HSL. The lightness floor (75%) guarantees black text is always the
 // high-contrast choice, so we don't need a luminance calculator.
@@ -82,11 +87,40 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 
 	function rerenderUserRatings(username) {
 		const esc = CSS.escape(username);
-		const text = String(store.getRating(username));
+		const rating = store.getRating(username);
+		const text = String(rating);
 		for (const rd of document.querySelectorAll(
 			`.hn-rating-display[data-hn-user="${esc}"]`,
 		)) {
 			rd.textContent = text;
+		}
+		const collapse = shouldAutoCollapseAuthor(
+			rating,
+			LOW_SCORE_COLLAPSE_THRESHOLD,
+		);
+		for (const row of document.querySelectorAll(
+			`tr.comtr[data-hn-author="${esc}"]`,
+		)) {
+			row.classList.toggle("hn-low-score", collapse);
+			// Any rating change resets the manual-expand state so the row
+			// snaps back to the canonical collapsed/expanded shape derived
+			// from the new rating.
+			row.classList.remove("hn-low-score-expanded");
+			// Keep the [low score] marker in sync with the collapse class —
+			// a comhead with a "[low score]" tag but a fully-visible body
+			// would be misleading, and a freshly-collapsed row that never
+			// had the marker (because it was added to the rating below the
+			// threshold mid-session) needs one now.
+			const head = row.querySelector("span.comhead");
+			if (!head) continue;
+			const existing = head.querySelector(".hn-low-score-tag");
+			if (collapse && !existing) {
+				head.append(
+					h("span", { class: "hn-low-score-tag", text: "[low score]" }),
+				);
+			} else if (!collapse && existing) {
+				existing.remove();
+			}
 		}
 	}
 
