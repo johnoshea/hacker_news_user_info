@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+99a8192
+// @version      0.11+e1854a1
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -1604,6 +1604,33 @@ const STYLES = `
     }
     .hn-watched-link::before {
       content: "★ ";
+    }
+
+    /* Auto-collapse: when an author's stored rating is <= the
+       LOW_SCORE_COLLAPSE_THRESHOLD, the row is tagged .hn-low-score and
+       the body + reply link are hidden. The comhead and the
+       user-render main row stay visible (so the rating buttons remain
+       reachable), and replies — which are separate tr.comtr rows —
+       are unaffected. Clicking the indent gutter toggles
+       .hn-low-score-expanded, which uses display: revert to undo the
+       hide on this single row. */
+    tr.comtr.hn-low-score .commtext,
+    tr.comtr.hn-low-score .reply {
+      display: none;
+    }
+
+    tr.comtr.hn-low-score.hn-low-score-expanded .commtext,
+    tr.comtr.hn-low-score.hn-low-score-expanded .reply {
+      display: revert;
+    }
+
+    /* "[low score]" marker appended to the comhead next to the existing
+       "[collapse root]" link. Faint grey so it reads as metadata rather
+       than as another action link. */
+    .hn-low-score-tag {
+      color: #999;
+      margin-left: 4px;
+      font-size: 0.9em;
     }
   `;
 
