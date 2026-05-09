@@ -55,6 +55,7 @@ const SOURCES = [
 	"src/features/backticks-to-monospace.js",
 	"src/features/toggle-all-comments.js",
 	"src/features/highlight-unread-comments.js",
+	"src/features/auto-collapse-low-score.js",
 	"src/features/hover-popup.js",
 	"src/features/user-info-hover.js",
 	"src/features/item-info-hover.js",
