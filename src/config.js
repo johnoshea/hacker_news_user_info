@@ -57,3 +57,11 @@ export const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 // load (each watched comment fires one tiny JSON request per session
 // per throttle window, behind fetchItem's inflight-dedup map).
 export const WATCH_RECHECK_THROTTLE_MS = 30 * 60 * 1000;
+
+// Authors whose stored rating sits at or below this value have their
+// comments auto-collapsed on render. Rating defaults to 0, so the
+// threshold must be negative (otherwise every unrated user would
+// collapse). The value is intentionally a constant rather than a
+// toolbar-configurable setting — it's a single edit if it ever needs
+// to change, and the simplicity is worth more than the flexibility.
+export const LOW_SCORE_COLLAPSE_THRESHOLD = -10;
