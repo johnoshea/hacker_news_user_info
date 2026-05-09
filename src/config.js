@@ -53,10 +53,14 @@ export const HOVER_DWELL_MS = 250;
 export const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 // Minimum interval between API rechecks of a single watched comment.
-// 30 minutes balances freshness ("new reply just arrived") against
-// load (each watched comment fires one tiny JSON request per session
-// per throttle window, behind fetchItem's inflight-dedup map).
-export const WATCH_RECHECK_THROTTLE_MS = 30 * 60 * 1000;
+// 60 seconds is short enough that the listing-page highlight reflects
+// new replies on the very next page load after they arrive (anything
+// longer leaves the user staring at an unflagged comments link while
+// the throttle still applies from the most recent item-page sync), and
+// long enough to dedup tight reload spam. Each request is a tiny JSON
+// behind fetchItem's inflight-dedup map, so the load impact is small
+// even with several active watches.
+export const WATCH_RECHECK_THROTTLE_MS = 60 * 1000;
 
 // Authors whose stored rating sits at or below this value have their
 // comments auto-collapsed on render. Rating defaults to 0, so the
