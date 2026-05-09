@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+1091031
+// @version      0.11+159a25f
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -2209,6 +2209,15 @@ function createHoverPopup() {
 		visibleNear = null;
 		popup.replaceChildren();
 	}
+
+	// Escape dismisses whichever hover popup is currently visible.
+	// Single document-level listener means user/item/parent hovers all
+	// inherit keyboard dismissal automatically.
+	document.addEventListener("keydown", (e) => {
+		if (e.key !== "Escape") return;
+		if (popup.classList.contains("hidden")) return;
+		hide();
+	});
 
 	// Wire mouseenter/mouseleave on `target` so that, after HOVER_DWELL_MS
 	// of continuous hover, `loader()` is invoked. If it resolves and the

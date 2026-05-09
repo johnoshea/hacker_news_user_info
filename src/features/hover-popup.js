@@ -45,6 +45,15 @@ export function createHoverPopup() {
 		popup.replaceChildren();
 	}
 
+	// Escape dismisses whichever hover popup is currently visible.
+	// Single document-level listener means user/item/parent hovers all
+	// inherit keyboard dismissal automatically.
+	document.addEventListener("keydown", (e) => {
+		if (e.key !== "Escape") return;
+		if (popup.classList.contains("hidden")) return;
+		hide();
+	});
+
 	// Wire mouseenter/mouseleave on `target` so that, after HOVER_DWELL_MS
 	// of continuous hover, `loader()` is invoked. If it resolves and the
 	// cursor is still on the target, `render(data)` is called and its
