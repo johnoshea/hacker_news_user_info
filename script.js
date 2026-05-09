@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+66f7356
+// @version      0.11+fb0badb
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -964,6 +964,20 @@ function getItemPageId() {
 	return params.get("id") || null;
 }
 
+// Find the listing-page story table. HN's older markup tagged it with
+// `class="itemlist"`; the current markup leaves the table unclassed
+// inside `<tr id="bigbox">`, so we anchor off the per-story
+// `tr.athing.submission` marker instead. Returns null on item pages
+// (the only `tr.athing.submission` there is the fatitem header, which
+// we exclude) and on pages with no submission rows at all.
+function getStoryListTable() {
+	const row = document.querySelector("tr.athing.submission");
+	if (!row) return null;
+	const table = row.closest("table");
+	if (!table || table.classList.contains("fatitem")) return null;
+	return table;
+}
+
 
 // ===== src/styles.js =====
 
@@ -1470,9 +1484,9 @@ const STYLES = `
       overflow: hidden;
     }
 
-    /* PR-5: sort-stories dropdown sits above table.itemlist on listing
-       pages. Match HN's subtext font size so it doesn't dominate the
-       layout. */
+    /* PR-5: sort-stories dropdown sits above the listing table on
+       listing pages. Match HN's subtext font size so it doesn't
+       dominate the layout. */
     .hn-sort-bar {
       padding: 6px 10px;
       font-size: 0.8em;
@@ -2363,7 +2377,7 @@ function setupLinkifyUserAbout() {
 // ===== src/features/sort-stories.js =====
 
 // On listing pages (/news, /newest, /ask, /show, /best, /front, etc.)
-// add a "sort: …" dropdown above table.itemlist. Selecting an option
+// add a "sort: …" dropdown above the story table. Selecting an option
 // reorders the story rows in place; a "reverse" link flips the
 // current order. Sort options:
 //   - default: HN's server-supplied rank
@@ -2385,8 +2399,8 @@ const MODES = [
 	{ value: "ratio", label: "comments/score ratio" },
 ];
 
-// Read each story's metadata + the 3 row group it occupies in
-// table.itemlist > tbody. HN renders each story as exactly:
+// Read each story's metadata + the 3 row group it occupies in the
+// listing table's tbody. HN renders each story as exactly:
 //   <tr class="athing">    -- title row, id=NNNN
 //   <tr>...</tr>           -- subtext row (score, by, time, comments)
 //   <tr style="height:5px">-- spacer row
@@ -2428,9 +2442,9 @@ function parseStoryRows(table) {
 }
 
 function rerenderStories(tbody, stories) {
-	// HN appends a "More" link as the last row of itemlist (and a
-	// matching morespace row above it). Preserve those at the end so
-	// pagination still works after reorder.
+	// HN appends a "More" link as the last row of the listing table
+	// (and a matching morespace row above it). Preserve those at the
+	// end so pagination still works after reorder.
 	const allRows = Array.from(tbody.children);
 	const moreRow = allRows[allRows.length - 1];
 	const moreSpace = allRows[allRows.length - 2];
@@ -2459,7 +2473,7 @@ function rerenderStories(tbody, stories) {
 	}
 }
 function setupSortStories() {
-	const table = document.querySelector("table.itemlist");
+	const table = getStoryListTable();
 	if (!table) return;
 	const tbody = table.querySelector("tbody");
 	if (!tbody) return;
@@ -3170,14 +3184,16 @@ function setupWatchedCommentNav({ store, toolbar }) {
 
 // ===== src/features/watched-listing-highlights.js =====
 
-// Listing-page pass: for any story row in table.itemlist whose item
-// has at least one watched comment, kick off a stale-aware fresh
+// Listing-page pass: for any story row in the listing table whose
+// item has at least one watched comment, kick off a stale-aware fresh
 // fetchItem recheck on each watch and, when any has new replies,
 // restyle the story's "n comments" link with .hn-watched-link. The
 // star ★ prefix is injected via the CSS ::before rule, not inline.
 //
-// Runs unconditionally; gates internally on table.itemlist (matches
-// setupSortStories' approach so the call site in main.js stays simple).
+// Runs unconditionally; gates internally on getStoryListTable()
+// (matches setupSortStories' approach so the call site in main.js
+// stays simple).
+
 
 
 
@@ -3192,7 +3208,7 @@ function findCommentsLink(athingRow) {
 	return links[links.length - 1] || null;
 }
 function setupWatchedListingHighlights({ store, fetchItem }) {
-	const table = document.querySelector("table.itemlist");
+	const table = getStoryListTable();
 	if (!table) return;
 
 	const grouped = watchesByItemId(store.getWatchedComments());
@@ -3812,7 +3828,7 @@ if (typeof GM_addValueChangeListener === "function") {
 applyDownvotedClass();
 transformQuotes();
 // Linkify and sort-stories are page-gated internally (linkify by
-// pathname, sort by table.itemlist presence), so call unconditionally.
+// pathname, sort by listing-table presence), so call unconditionally.
 setupLinkifyUserAbout();
 setupSortStories();
 setupWatchedListingHighlights({ store, fetchItem });

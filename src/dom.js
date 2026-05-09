@@ -37,3 +37,17 @@ export function getItemPageId() {
 	const params = new URLSearchParams(window.location.search);
 	return params.get("id") || null;
 }
+
+// Find the listing-page story table. HN's older markup tagged it with
+// `class="itemlist"`; the current markup leaves the table unclassed
+// inside `<tr id="bigbox">`, so we anchor off the per-story
+// `tr.athing.submission` marker instead. Returns null on item pages
+// (the only `tr.athing.submission` there is the fatitem header, which
+// we exclude) and on pages with no submission rows at all.
+export function getStoryListTable() {
+	const row = document.querySelector("tr.athing.submission");
+	if (!row) return null;
+	const table = row.closest("table");
+	if (!table || table.classList.contains("fatitem")) return null;
+	return table;
+}

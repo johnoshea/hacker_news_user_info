@@ -9,9 +9,9 @@ A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 1. **Site-wide legibility layer** (every HN page, `news.ycombinator.com/*`): font reset, sizing, gutters, full-width main, downvoted-comment restyling (black-on-faint-grey), quoted-text rendering (`>`-prefixed text wrapped in `<p class="quote">` with HN-orange accents), and `.rank` hidden. CSS comes from a `:root` block with `--colour-hn-orange`, `--colour-hn-orange-pale`, `--gutter`, and `--border-radius` tokens. Adapted from [mgladdish/website-customisations](https://github.com/mgladdish/website-customisations).
 2. **Comment-page enrichment layer** (only `news.ycombinator.com/item?id=*`, gated by `isItemPage()`): account age + karma inline, per-user custom tags with colors, per-user up/down rating, OP highlight (`[op]` suffix on every comment by the item submitter), click-the-indent-gutter to collapse, `[collapse root]` link on nested comments, "toggle all" link on the fatitem subtext, backtick-wrapped text rendered as `<code>`, highlight for comments new since last visit, hover-on-cited-item popup, dead-comment recolour, indent-gutter separator, `<pre>`/`<code>` styling, draggable toolbar for export/import, a "show comment box" toggle that collapses the page-bottom comment-submit form, and a per-comment "watch for replies" toggle (eye icon) with toolbar prev/next nav between watched comments.
 3. **Hover-on-username popup** runs on every HN page (except `/user`, where you're already looking at the profile): hovering any `.hnuser` for the dwell period (250ms) shows a popup with their account age, karma, and about-text snippet, fetched once and cached for 6h.
-4. **Listing-page enhancements** (any page with a `table.itemlist`): a "sort: …" dropdown re-orders the story list in place — `default` / `time` / `score` / `ratio`, plus a `reverse` link.
+4. **Listing-page enhancements** (any page whose story table is found by `getStoryListTable()` in `src/dom.js` — anchors off a `tr.athing.submission` row, excluding the item-page fatitem header): a "sort: …" dropdown re-orders the story list in place — `default` / `time` / `score` / `ratio`, plus a `reverse` link.
 5. **`/user` page enhancement**: plain-text URLs and email addresses in the about cell get turned into clickable links.
-6. **Watch-for-replies cross-page layer**: `setupWatchedListingHighlights` runs on listing pages (anything with `table.itemlist`); for each story whose thread contains a watched comment, fires a throttle-aware Firebase API recheck and adds `.hn-watched-link` (bold HN orange + `★ ` prefix) to the "n comments" link when new direct replies have arrived since you started watching.
+6. **Watch-for-replies cross-page layer**: `setupWatchedListingHighlights` runs on listing pages (anything `getStoryListTable()` resolves); for each story whose thread contains a watched comment, fires a throttle-aware Firebase API recheck and adds `.hn-watched-link` (bold HN orange + `★ ` prefix) to the "n comments" link when new direct replies have arrived since you started watching.
 
 `src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`), `setupLinkifyUserAbout`, `setupSortStories`, and `setupWatchedListingHighlights` on every HN page (each feature internally checks whether its page is the right one). The enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `setupItemInfoHover`, `setupReplyInline`, `toolbar.mount`) run only on item pages. `setupUserInfoHover` runs last and on every HN page (the feature internally skips `/user`); it has to come after `renderAllUsernames` so the hover handler lands on the visible cloned `.hnuser` rather than the now-hidden original.
 
@@ -38,7 +38,8 @@ src/
                              linkifySegments, sortStoriesBy
   state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
-  dom.js                     h() factory, findCommentParent, isItemPage, getItemPageId
+  dom.js                     h() factory, findCommentParent, isItemPage, getItemPageId,
+                             getStoryListTable
   styles.js                  CSS as a single tagged-template export (STYLES)
   api.js                     createApi factory: fetchUser with cache + inflight + timeout
   features/
@@ -60,7 +61,7 @@ src/
                              for the cited item's title/score/author/comment-count preview
     linkify-user-about.js    setupLinkifyUserAbout: on /user pages, replaces plain-text
                              URLs / emails in the about cell with clickable <a> elements
-    sort-stories.js          setupSortStories: dropdown above table.itemlist on listing
+    sort-stories.js          setupSortStories: dropdown above the listing
                              pages — sorts by default / time / score / ratio + reverse
     reply-inline.js          setupReplyInline: makes reply/edit/delete links inject the
                              relevant HN form into the comment instead of navigating away

@@ -1,13 +1,15 @@
-// Listing-page pass: for any story row in table.itemlist whose item
-// has at least one watched comment, kick off a stale-aware fresh
+// Listing-page pass: for any story row in the listing table whose
+// item has at least one watched comment, kick off a stale-aware fresh
 // fetchItem recheck on each watch and, when any has new replies,
 // restyle the story's "n comments" link with .hn-watched-link. The
 // star ★ prefix is injected via the CSS ::before rule, not inline.
 //
-// Runs unconditionally; gates internally on table.itemlist (matches
-// setupSortStories' approach so the call site in main.js stays simple).
+// Runs unconditionally; gates internally on getStoryListTable()
+// (matches setupSortStories' approach so the call site in main.js
+// stays simple).
 
 import { WATCH_RECHECK_THROTTLE_MS } from "../config.js";
+import { getStoryListTable } from "../dom.js";
 import { isWatchCheckStale, watchesByItemId } from "../parsing.js";
 
 // Find the "n comments" link for a story row. HN renders each story
@@ -22,7 +24,7 @@ function findCommentsLink(athingRow) {
 }
 
 export function setupWatchedListingHighlights({ store, fetchItem }) {
-	const table = document.querySelector("table.itemlist");
+	const table = getStoryListTable();
 	if (!table) return;
 
 	const grouped = watchesByItemId(store.getWatchedComments());

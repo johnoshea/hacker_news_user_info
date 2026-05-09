@@ -78,7 +78,7 @@ if (typeof GM_addValueChangeListener === "function") {
 applyDownvotedClass();
 transformQuotes();
 // Linkify and sort-stories are page-gated internally (linkify by
-// pathname, sort by table.itemlist presence), so call unconditionally.
+// pathname, sort by listing-table presence), so call unconditionally.
 setupLinkifyUserAbout();
 setupSortStories();
 setupWatchedListingHighlights({ store, fetchItem });
