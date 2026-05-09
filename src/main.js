@@ -5,6 +5,7 @@
 import { createApi } from "./api.js";
 import { STATE_KEY } from "./config.js";
 import { isItemPage } from "./dom.js";
+import { setupAutoCollapseLowScore } from "./features/auto-collapse-low-score.js";
 import { transformBackticksToMonospace } from "./features/backticks-to-monospace.js";
 import { setupClickIndentToggle } from "./features/click-indent-toggle.js";
 import { setupCollapseRootComment } from "./features/collapse-root-comment.js";
@@ -91,6 +92,7 @@ if (isItemPage()) {
 	setupToggleAllComments();
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
+	setupAutoCollapseLowScore({ store });
 	setupWatchToggles({ store, fetchItem });
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
