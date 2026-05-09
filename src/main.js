@@ -5,6 +5,7 @@
 import { createApi } from "./api.js";
 import { STATE_KEY } from "./config.js";
 import { isItemPage } from "./dom.js";
+import { setupAutoCollapseLowScore } from "./features/auto-collapse-low-score.js";
 import { transformBackticksToMonospace } from "./features/backticks-to-monospace.js";
 import { setupClickIndentToggle } from "./features/click-indent-toggle.js";
 import { setupCollapseRootComment } from "./features/collapse-root-comment.js";
@@ -14,6 +15,7 @@ import { createHoverPopup } from "./features/hover-popup.js";
 import { setupItemInfoHover } from "./features/item-info-hover.js";
 import { applyDownvotedClass, transformQuotes } from "./features/legibility.js";
 import { setupLinkifyUserAbout } from "./features/linkify-user-about.js";
+import { setupParentHover } from "./features/parent-hover.js";
 import { setupReplyInline } from "./features/reply-inline.js";
 import { setupSortStories } from "./features/sort-stories.js";
 import { createTagManager } from "./features/tag-manager.js";
@@ -91,8 +93,10 @@ if (isItemPage()) {
 	setupToggleAllComments();
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
+	setupAutoCollapseLowScore({ store });
 	setupWatchToggles({ store, fetchItem });
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
+	setupParentHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
 	toolbar.mount();
 	setupWatchedCommentNav({ store, toolbar });

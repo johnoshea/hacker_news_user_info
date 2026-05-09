@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+fb0badb
+// @version      0.11+a5c3269
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -78,6 +78,14 @@ const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 // load (each watched comment fires one tiny JSON request per session
 // per throttle window, behind fetchItem's inflight-dedup map).
 const WATCH_RECHECK_THROTTLE_MS = 30 * 60 * 1000;
+
+// Authors whose stored rating sits at or below this value have their
+// comments auto-collapsed on render. Rating defaults to 0, so the
+// threshold must be negative (otherwise every unrated user would
+// collapse). The value is intentionally a constant rather than a
+// toolbar-configurable setting — it's a single edit if it ever needs
+// to change, and the simplicity is worth more than the flexibility.
+const LOW_SCORE_COLLAPSE_THRESHOLD = -10;
 
 
 // ===== src/parsing.js =====
@@ -361,6 +369,43 @@ function watchesByItemId(map) {
 		out[entry.itemId].push({ commentId, hasNew });
 	}
 	return out;
+}
+
+// True iff this author's rating crosses the auto-collapse threshold.
+// Threshold is expected to be negative; a rating of 0 (the default
+// for an unrated user) must never collapse. Boundary is inclusive —
+// a rating equal to the threshold counts as "low score".
+function shouldAutoCollapseAuthor(rating, threshold) {
+	return rating <= threshold;
+}
+
+// Pull the comment id from a "parent" link's href. HN serves these
+// as `item?id=12345` (relative); a base URL is supplied so the
+// pure-Node URL parser can resolve relative inputs. Returns null on
+// any parse failure or missing `id` param so the caller can decide
+// (typically: skip the popup).
+function parseParentIdFromHref(href) {
+	if (typeof href !== "string" || href === "") return null;
+	try {
+		const url = new URL(href, "https://news.ycombinator.com/");
+		return url.searchParams.get("id") || null;
+	} catch {
+		return null;
+	}
+}
+
+// Split a comment-body HTML string into paragraph-equivalent chunks.
+// HN uses <p> as a separator (not a wrapper), so we split on any
+// <p ...> tag and return the trimmed non-empty pieces. Inline markup
+// (<a>, <i>, <code>, <pre>) inside each chunk is preserved as-is —
+// the caller decides whether to render via DOMParser or treat as
+// plain text.
+function splitHtmlIntoParagraphs(html) {
+	if (typeof html !== "string" || html === "") return [];
+	return html
+		.split(/<p\b[^>]*>/i)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
 }
 
 
@@ -1560,6 +1605,33 @@ const STYLES = `
     .hn-watched-link::before {
       content: "★ ";
     }
+
+    /* Auto-collapse: when an author's stored rating is <= the
+       LOW_SCORE_COLLAPSE_THRESHOLD, the row is tagged .hn-low-score and
+       the body + reply link are hidden. The comhead and the
+       user-render main row stay visible (so the rating buttons remain
+       reachable), and replies — which are separate tr.comtr rows —
+       are unaffected. Clicking the indent gutter toggles
+       .hn-low-score-expanded, which uses display: revert to undo the
+       hide on this single row. */
+    tr.comtr.hn-low-score .commtext,
+    tr.comtr.hn-low-score .reply {
+      display: none;
+    }
+
+    tr.comtr.hn-low-score.hn-low-score-expanded .commtext,
+    tr.comtr.hn-low-score.hn-low-score-expanded .reply {
+      display: revert;
+    }
+
+    /* "[low score]" marker appended to the comhead next to the existing
+       "[collapse root]" link. Faint grey so it reads as metadata rather
+       than as another action link. */
+    .hn-low-score-tag {
+      color: #999;
+      margin-left: 4px;
+      font-size: 0.9em;
+    }
   `;
 
 
@@ -1785,9 +1857,13 @@ function setupCommentBoxToggle() {
 
 // ===== src/features/click-indent-toggle.js =====
 
-// Make the empty indent column on each comment a click target that fires
-// HN's native toggle (collapse/expand). Cheap to add, big quality-of-life
-// win on long threads — there's a lot of indent gutter to click.
+// Make the empty indent column on each comment a click target.
+// Default behaviour: fire HN's native toggle (collapse/expand the
+// whole subtree). Overridden behaviour: on rows tagged
+// .hn-low-score (auto-collapsed because the author's rating is at
+// or below the configured threshold), toggle .hn-low-score-expanded
+// instead — score-collapse hides only this comment's body, not its
+// replies, so HN's native subtree toggle would do the wrong thing.
 function setupClickIndentToggle() {
 	for (const row of document.querySelectorAll("tr.comtr")) {
 		const indentCell = row.querySelector("td.ind");
@@ -1795,6 +1871,10 @@ function setupClickIndentToggle() {
 		if (!indentCell || !toggleBtn) continue;
 		indentCell.classList.add("hn-clickable-indent");
 		indentCell.addEventListener("click", () => {
+			if (row.classList.contains("hn-low-score")) {
+				row.classList.toggle("hn-low-score-expanded");
+				return;
+			}
 			toggleBtn.click();
 		});
 	}
@@ -2049,6 +2129,42 @@ function setupHighlightUnreadComments({ store }) {
 }
 
 
+// ===== src/features/auto-collapse-low-score.js =====
+
+// Auto-collapse comments whose author's stored rating is at or
+// below LOW_SCORE_COLLAPSE_THRESHOLD. This pass walks every
+// tr.comtr on the page once, tags each row with
+// data-hn-author=<username> (so rerenderUserRatings can find rows
+// by author later), and applies the .hn-low-score class to rows
+// whose author crosses the threshold. CSS in styles.js does the
+// actual hiding.
+//
+// The [low score] marker is appended to the comhead — same
+// position as the existing [collapse root] link — so the reader
+// has a visible reason for the empty body.
+function setupAutoCollapseLowScore({ store }) {
+	for (const row of document.querySelectorAll("tr.comtr")) {
+		const userEl = row.querySelector(".hnuser");
+		const username = userEl?.textContent || "";
+		if (!username) continue;
+		row.dataset.hnAuthor = username;
+
+		const rating = store.getRating(username);
+		if (!shouldAutoCollapseAuthor(rating, LOW_SCORE_COLLAPSE_THRESHOLD)) {
+			continue;
+		}
+		row.classList.add("hn-low-score");
+
+		const head = row.querySelector("span.comhead");
+		if (head) {
+			head.append(
+				h("span", { class: "hn-low-score-tag", text: "[low score]" }),
+			);
+		}
+	}
+}
+
+
 // ===== src/features/hover-popup.js =====
 
 // Shared hover-popup primitive used by user-info-hover and item-info-hover.
@@ -2093,6 +2209,15 @@ function createHoverPopup() {
 		visibleNear = null;
 		popup.replaceChildren();
 	}
+
+	// Escape dismisses whichever hover popup is currently visible.
+	// Single document-level listener means user/item/parent hovers all
+	// inherit keyboard dismissal automatically.
+	document.addEventListener("keydown", (e) => {
+		if (e.key !== "Escape") return;
+		if (popup.classList.contains("hidden")) return;
+		hide();
+	});
 
 	// Wire mouseenter/mouseleave on `target` so that, after HOVER_DWELL_MS
 	// of continuous hover, `loader()` is invoked. If it resolves and the
@@ -2282,6 +2407,117 @@ function setupItemInfoHover({ fetchItem, popup }) {
 			link,
 			() => fetchItem(id),
 			(digest) => renderItemPopup(digest),
+		);
+	}
+}
+
+
+// ===== src/features/parent-hover.js =====
+
+// Hover the "parent" link in any comment's comhead for HOVER_DWELL_MS
+// to see the parent comment's body inline — saves a navigation
+// round-trip in deep or wide threads. Resolves the parent first via
+// the on-page DOM (the common case: parent is somewhere above the
+// hovered comment in the same item page) and falls back to the
+// existing fetchItem cache when the parent isn't on the page (e.g.
+// you're viewing a deep subtree at /item?id=DEEP_COMMENT, or the
+// parent is the story itself for a top-level comment).
+//
+// The popup shows up to two paragraphs of body, plus an ellipsis if
+// more were dropped. For a story parent (top-level comments), the
+// title is rendered as a bold first line above the body. Author,
+// timestamp and score are deliberately omitted — the goal is to
+// remind the reader of what the comment-being-replied-to said, not
+// to re-show metadata.
+
+
+
+const MAX_PARAGRAPHS = 2;
+
+// Parse a paragraph HTML string into a fragment of DOM nodes,
+// preserving inline markup (anchors, italics, code) without trusting
+// the string as live HTML. DOMParser delivers a sandboxed Document;
+// we only adopt the parsed children.
+function paragraphToNodes(htmlChunk) {
+	const doc = new DOMParser().parseFromString(
+		`<div>${htmlChunk}</div>`,
+		"text/html",
+	);
+	const wrapper = doc.body.firstChild;
+	if (!wrapper) return [];
+	return Array.from(wrapper.childNodes).map((n) =>
+		document.importNode(n, true),
+	);
+}
+
+function renderParagraphs(paragraphs, hasMore) {
+	const nodes = [];
+	for (const para of paragraphs) {
+		nodes.push(
+			h("p", { class: "hn-hover-popup-body" }, paragraphToNodes(para)),
+		);
+	}
+	if (hasMore) {
+		nodes.push(h("p", { class: "hn-hover-popup-body", text: "…" }));
+	}
+	return nodes;
+}
+
+// Try the on-page DOM first. Returns null if the parent isn't on the
+// page or has no body content (deleted comments fall through to the
+// API path, which can return a [deleted] placeholder or null).
+function loadFromDom(parentId) {
+	const row = document.getElementById(parentId);
+	if (!row || row.tagName !== "TR") return null;
+	const commtext = row.querySelector(".commtext");
+	if (!commtext) return null;
+	const paragraphs = splitHtmlIntoParagraphs(commtext.innerHTML);
+	if (paragraphs.length === 0) return null;
+	return {
+		title: null,
+		paragraphs: paragraphs.slice(0, MAX_PARAGRAPHS),
+		hasMore: paragraphs.length > MAX_PARAGRAPHS,
+	};
+}
+
+async function loadFromApi(parentId, fetchItem) {
+	const digest = await fetchItem(parentId);
+	if (!digest) return null;
+	const paragraphs = splitHtmlIntoParagraphs(digest.text || "");
+	if (paragraphs.length === 0 && !digest.title) return null;
+	return {
+		title: digest.title || null,
+		paragraphs: paragraphs.slice(0, MAX_PARAGRAPHS),
+		hasMore: paragraphs.length > MAX_PARAGRAPHS,
+	};
+}
+
+function renderPopup(data) {
+	const lines = [];
+	if (data.title) {
+		lines.push(
+			h("div", { class: "hn-hover-popup-title" }, [
+				h("strong", { text: data.title }),
+			]),
+		);
+	}
+	for (const node of renderParagraphs(data.paragraphs, data.hasMore)) {
+		lines.push(node);
+	}
+	return lines;
+}
+function setupParentHover({ fetchItem, popup }) {
+	const links = document.querySelectorAll("span.comhead a[href^='item?id=']");
+	for (const link of links) {
+		// The comhead has multiple "item?id=" anchors (parent, prev, next,
+		// root, context); only the "parent" link is the use case here.
+		if (link.textContent.trim() !== "parent") continue;
+		const id = parseParentIdFromHref(link.getAttribute("href") || link.href);
+		if (!id) continue;
+		popup.attachDwell(
+			link,
+			() => loadFromDom(id) ?? loadFromApi(id, fetchItem),
+			(data) => renderPopup(data),
 		);
 	}
 }
@@ -2684,6 +2920,7 @@ function setupReplyInline() {
 
 
 
+
 // Pastel HSL. The lightness floor (75%) guarantees black text is always the
 // high-contrast choice, so we don't need a luminance calculator.
 function randomPastelColor() {
@@ -2761,11 +2998,40 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 
 	function rerenderUserRatings(username) {
 		const esc = CSS.escape(username);
-		const text = String(store.getRating(username));
+		const rating = store.getRating(username);
+		const text = String(rating);
 		for (const rd of document.querySelectorAll(
 			`.hn-rating-display[data-hn-user="${esc}"]`,
 		)) {
 			rd.textContent = text;
+		}
+		const collapse = shouldAutoCollapseAuthor(
+			rating,
+			LOW_SCORE_COLLAPSE_THRESHOLD,
+		);
+		for (const row of document.querySelectorAll(
+			`tr.comtr[data-hn-author="${esc}"]`,
+		)) {
+			row.classList.toggle("hn-low-score", collapse);
+			// Any rating change resets the manual-expand state so the row
+			// snaps back to the canonical collapsed/expanded shape derived
+			// from the new rating.
+			row.classList.remove("hn-low-score-expanded");
+			// Keep the [low score] marker in sync with the collapse class —
+			// a comhead with a "[low score]" tag but a fully-visible body
+			// would be misleading, and a freshly-collapsed row that never
+			// had the marker (because it was added to the rating below the
+			// threshold mid-session) needs one now.
+			const head = row.querySelector("span.comhead");
+			if (!head) continue;
+			const existing = head.querySelector(".hn-low-score-tag");
+			if (collapse && !existing) {
+				head.append(
+					h("span", { class: "hn-low-score-tag", text: "[low score]" }),
+				);
+			} else if (!collapse && existing) {
+				existing.remove();
+			}
 		}
 	}
 
@@ -3777,6 +4043,8 @@ function createToolbar({ store, backend }) {
 
 
 
+
+
 GM_addStyle(STYLES);
 
 // Adapter from GM_* to the {get, set, list} interface the store and
@@ -3841,8 +4109,10 @@ if (isItemPage()) {
 	setupToggleAllComments();
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
+	setupAutoCollapseLowScore({ store });
 	setupWatchToggles({ store, fetchItem });
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
+	setupParentHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
 	toolbar.mount();
 	setupWatchedCommentNav({ store, toolbar });

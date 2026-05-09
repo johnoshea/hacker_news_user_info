@@ -279,3 +279,40 @@ export function watchesByItemId(map) {
 	}
 	return out;
 }
+
+// True iff this author's rating crosses the auto-collapse threshold.
+// Threshold is expected to be negative; a rating of 0 (the default
+// for an unrated user) must never collapse. Boundary is inclusive —
+// a rating equal to the threshold counts as "low score".
+export function shouldAutoCollapseAuthor(rating, threshold) {
+	return rating <= threshold;
+}
+
+// Pull the comment id from a "parent" link's href. HN serves these
+// as `item?id=12345` (relative); a base URL is supplied so the
+// pure-Node URL parser can resolve relative inputs. Returns null on
+// any parse failure or missing `id` param so the caller can decide
+// (typically: skip the popup).
+export function parseParentIdFromHref(href) {
+	if (typeof href !== "string" || href === "") return null;
+	try {
+		const url = new URL(href, "https://news.ycombinator.com/");
+		return url.searchParams.get("id") || null;
+	} catch {
+		return null;
+	}
+}
+
+// Split a comment-body HTML string into paragraph-equivalent chunks.
+// HN uses <p> as a separator (not a wrapper), so we split on any
+// <p ...> tag and return the trimmed non-empty pieces. Inline markup
+// (<a>, <i>, <code>, <pre>) inside each chunk is preserved as-is —
+// the caller decides whether to render via DOMParser or treat as
+// plain text.
+export function splitHtmlIntoParagraphs(html) {
+	if (typeof html !== "string" || html === "") return [];
+	return html
+		.split(/<p\b[^>]*>/i)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+}
