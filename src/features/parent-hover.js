@@ -93,10 +93,12 @@ function renderPopup(data) {
 }
 
 export function setupParentHover({ fetchItem, popup }) {
-	const links = document.querySelectorAll("span.comhead a[href^='item?id=']");
+	// In-thread parent links use `href="#NNN"` (fragment anchor); only
+	// the fatitem header on a deep-subtree page uses `item?id=NNN`. We
+	// match every comhead anchor and filter by visible text, so both
+	// forms are wired up.
+	const links = document.querySelectorAll("span.comhead a");
 	for (const link of links) {
-		// The comhead has multiple "item?id=" anchors (parent, prev, next,
-		// root, context); only the "parent" link is the use case here.
 		if (link.textContent.trim() !== "parent") continue;
 		const id = parseParentIdFromHref(link.getAttribute("href") || link.href);
 		if (!id) continue;
