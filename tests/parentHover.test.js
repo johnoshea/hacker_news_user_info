@@ -3,8 +3,10 @@ import { test } from "node:test";
 import { parseParentIdFromHref } from "../src/parsing.js";
 
 // parseParentIdFromHref(href) extracts the comment id from a "parent"
-// link's href, which on HN takes the form "item?id=12345" (relative)
-// or the absolute equivalent. The result is fed to
+// link's href. HN renders this two ways: in-thread comments use a
+// fragment anchor "#12345" (parent is on the same page), while the
+// fatitem header on a deep-subtree page uses "item?id=12345"
+// (relative) or the absolute equivalent. The result is fed to
 // document.getElementById and to fetchItem; both expect a string.
 
 test("parseParentIdFromHref: relative href returns the id", () => {
@@ -20,6 +22,14 @@ test("parseParentIdFromHref: absolute href returns the id", () => {
 
 test("parseParentIdFromHref: trailing fragment is ignored", () => {
 	assert.equal(parseParentIdFromHref("item?id=12345#12345"), "12345");
+});
+
+test("parseParentIdFromHref: fragment-only href returns the id", () => {
+	assert.equal(parseParentIdFromHref("#12345"), "12345");
+});
+
+test("parseParentIdFromHref: non-numeric fragment returns null", () => {
+	assert.equal(parseParentIdFromHref("#notanid"), null);
 });
 
 test("parseParentIdFromHref: id with extra params still resolves", () => {

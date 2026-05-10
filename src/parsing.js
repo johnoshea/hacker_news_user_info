@@ -288,16 +288,21 @@ export function shouldAutoCollapseAuthor(rating, threshold) {
 	return rating <= threshold;
 }
 
-// Pull the comment id from a "parent" link's href. HN serves these
-// as `item?id=12345` (relative); a base URL is supplied so the
-// pure-Node URL parser can resolve relative inputs. Returns null on
-// any parse failure or missing `id` param so the caller can decide
-// (typically: skip the popup).
+// Pull the comment id from a "parent" link's href. HN renders these
+// two ways: in-thread comments use a fragment anchor `#12345` (the
+// parent row is on the same page) and the fatitem header on a
+// deep-subtree page uses `item?id=12345`. A base URL is supplied so
+// the pure-Node URL parser can resolve relative inputs. Returns null
+// on any parse failure, missing `id` param, or non-numeric fragment
+// so the caller can decide (typically: skip the popup).
 export function parseParentIdFromHref(href) {
 	if (typeof href !== "string" || href === "") return null;
 	try {
 		const url = new URL(href, "https://news.ycombinator.com/");
-		return url.searchParams.get("id") || null;
+		const fromQuery = url.searchParams.get("id");
+		if (fromQuery) return fromQuery;
+		if (/^#\d+$/.test(url.hash)) return url.hash.slice(1);
+		return null;
 	} catch {
 		return null;
 	}

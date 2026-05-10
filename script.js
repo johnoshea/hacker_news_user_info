@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+cdb94ec
+// @version      0.11+c33f570
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -383,16 +383,21 @@ function shouldAutoCollapseAuthor(rating, threshold) {
 	return rating <= threshold;
 }
 
-// Pull the comment id from a "parent" link's href. HN serves these
-// as `item?id=12345` (relative); a base URL is supplied so the
-// pure-Node URL parser can resolve relative inputs. Returns null on
-// any parse failure or missing `id` param so the caller can decide
-// (typically: skip the popup).
+// Pull the comment id from a "parent" link's href. HN renders these
+// two ways: in-thread comments use a fragment anchor `#12345` (the
+// parent row is on the same page) and the fatitem header on a
+// deep-subtree page uses `item?id=12345`. A base URL is supplied so
+// the pure-Node URL parser can resolve relative inputs. Returns null
+// on any parse failure, missing `id` param, or non-numeric fragment
+// so the caller can decide (typically: skip the popup).
 function parseParentIdFromHref(href) {
 	if (typeof href !== "string" || href === "") return null;
 	try {
 		const url = new URL(href, "https://news.ycombinator.com/");
-		return url.searchParams.get("id") || null;
+		const fromQuery = url.searchParams.get("id");
+		if (fromQuery) return fromQuery;
+		if (/^#\d+$/.test(url.hash)) return url.hash.slice(1);
+		return null;
 	} catch {
 		return null;
 	}
@@ -2511,10 +2516,12 @@ function renderPopup(data) {
 	return lines;
 }
 function setupParentHover({ fetchItem, popup }) {
-	const links = document.querySelectorAll("span.comhead a[href^='item?id=']");
+	// In-thread parent links use `href="#NNN"` (fragment anchor); only
+	// the fatitem header on a deep-subtree page uses `item?id=NNN`. We
+	// match every comhead anchor and filter by visible text, so both
+	// forms are wired up.
+	const links = document.querySelectorAll("span.comhead a");
 	for (const link of links) {
-		// The comhead has multiple "item?id=" anchors (parent, prev, next,
-		// root, context); only the "parent" link is the use case here.
 		if (link.textContent.trim() !== "parent") continue;
 		const id = parseParentIdFromHref(link.getAttribute("href") || link.href);
 		if (!id) continue;
