@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+c33f570
+// @version      0.11+1b96140
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -3388,11 +3388,16 @@ function setupWatchToggles({ store, fetchItem }) {
 // ===== src/features/watched-comment-nav.js =====
 
 // Toolbar prev/next-watched-comment navigation. Runs after
-// toolbar.mount() on item pages. Adds two buttons to the toolbar's
-// button container when at least one watched comment WITH new replies
-// is present on this page; otherwise mounts nothing — the nav exists
-// to surface activity, so a watched comment with no new replies is
-// not a useful target.
+// toolbar.mount() and BEFORE setupWatchToggles on item pages. The
+// ordering matters: setupWatchToggles' page-load sync calls
+// markWatchSeen synchronously on the "not stale" path, which sets
+// seenKids = latestKids and zeroes the hasNew predicate this pass
+// reads. Capture targets first, then let the sync acknowledge.
+//
+// Adds two buttons to the toolbar's button container when at least
+// one watched comment WITH new replies is present on this page;
+// otherwise mounts nothing — the nav exists to surface activity, so a
+// watched comment with no new replies is not a useful target.
 //
 // "Current position" is tracked as a closure-local index into the
 // list of watched-comment rows, in document order. Initial value -1
@@ -4126,12 +4131,19 @@ if (isItemPage()) {
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
 	setupAutoCollapseLowScore({ store });
+	// toolbar.mount() and setupWatchedCommentNav() must run BEFORE
+	// setupWatchToggles(). The page-load sync inside setupWatchToggles
+	// calls markWatchSeen synchronously on the "not stale" path (i.e.
+	// when the listing-page recheck just ran within the throttle), which
+	// sets seenKids = latestKids and zeroes out the hasNew predicate the
+	// nav reads. Capture the nav targets first, then let the sync
+	// acknowledge the latest kids.
+	toolbar.mount();
+	setupWatchedCommentNav({ store, toolbar });
 	setupWatchToggles({ store, fetchItem });
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	setupParentHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
-	toolbar.mount();
-	setupWatchedCommentNav({ store, toolbar });
 }
 
 // User-info hover wires every .hnuser on every page (except /user

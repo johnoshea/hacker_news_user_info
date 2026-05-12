@@ -237,7 +237,7 @@ The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one
 6. `createToolbar({ store, backend })` for export/import.
 7. `GM_addValueChangeListener(STATE_KEY, …)` for cross-tab sync — calls `tagManager.getActive()?.markStale()` and the user-render rerender helpers.
 8. Always: `applyDownvotedClass()`, `transformQuotes()`.
-9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `userRender.renderAllUsernames()`, `setupWatchToggles()`, `toolbar.mount()`, `setupWatchedCommentNav()`.
+9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `userRender.renderAllUsernames()`, `toolbar.mount()`, `setupWatchedCommentNav()`, `setupWatchToggles()`. The nav must capture its targets before `setupWatchToggles`'s page-load sync runs — that sync calls `markWatchSeen` synchronously on the "not stale" path (when the listing-page recheck just ran within the 60s throttle), and `markWatchSeen` sets `seenKids = latestKids`, zeroing the `hasNew` predicate the nav reads.
 
 ## Userscript metadata
 

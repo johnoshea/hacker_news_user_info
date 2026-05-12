@@ -94,12 +94,19 @@ if (isItemPage()) {
 	setupHighlightUnreadComments({ store });
 	userRender.renderAllUsernames();
 	setupAutoCollapseLowScore({ store });
+	// toolbar.mount() and setupWatchedCommentNav() must run BEFORE
+	// setupWatchToggles(). The page-load sync inside setupWatchToggles
+	// calls markWatchSeen synchronously on the "not stale" path (i.e.
+	// when the listing-page recheck just ran within the throttle), which
+	// sets seenKids = latestKids and zeroes out the hasNew predicate the
+	// nav reads. Capture the nav targets first, then let the sync
+	// acknowledge the latest kids.
+	toolbar.mount();
+	setupWatchedCommentNav({ store, toolbar });
 	setupWatchToggles({ store, fetchItem });
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	setupParentHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
-	toolbar.mount();
-	setupWatchedCommentNav({ store, toolbar });
 }
 
 // User-info hover wires every .hnuser on every page (except /user
