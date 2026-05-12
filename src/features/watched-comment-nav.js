@@ -1,9 +1,14 @@
 // Toolbar prev/next-watched-comment navigation. Runs after
-// toolbar.mount() on item pages. Adds two buttons to the toolbar's
-// button container when at least one watched comment WITH new replies
-// is present on this page; otherwise mounts nothing — the nav exists
-// to surface activity, so a watched comment with no new replies is
-// not a useful target.
+// toolbar.mount() and BEFORE setupWatchToggles on item pages. The
+// ordering matters: setupWatchToggles' page-load sync calls
+// markWatchSeen synchronously on the "not stale" path, which sets
+// seenKids = latestKids and zeroes the hasNew predicate this pass
+// reads. Capture targets first, then let the sync acknowledge.
+//
+// Adds two buttons to the toolbar's button container when at least
+// one watched comment WITH new replies is present on this page;
+// otherwise mounts nothing — the nav exists to surface activity, so a
+// watched comment with no new replies is not a useful target.
 //
 // "Current position" is tracked as a closure-local index into the
 // list of watched-comment rows, in document order. Initial value -1
