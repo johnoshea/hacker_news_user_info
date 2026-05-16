@@ -199,6 +199,8 @@ Tag/rating mutations sync across all comments by the same user on the page. Inje
 
 Cross-tab sync (in `src/main.js`) uses `GM_addValueChangeListener` on `STATE_KEY`. When another tab writes to `hn_state`, the listener fires with `remote === true`, the store's in-memory cache is invalidated via `store._invalidate()`, and all visible users are re-rendered. The listener is guarded behind a `typeof` check so the script degrades gracefully if the API is unavailable.
 
+The rerender fires for every cross-tab write to `STATE_KEY`, not just tag/rating mutations — `setCachedUser`, `setCachedItem`, `updateWatchKids`, `setReadComments`, and so on all bump the same blob. To stop those incidental writes from clobbering text the user is mid-typing into a tag input, `rerenderUserTags(username)` skips both the focused `.hn-tag-input` and every `.hn-tag-group` for that user when one of its inputs has focus. The tag-group preview is left alone so the `renderPreview` keystroke handler stays the source of truth for what the user sees while typing; commit-on-blur is unaffected because the input has already lost focus by the time `commit` runs.
+
 If the tag-management overlay is open when a remote write arrives, the listener also calls `tagManager.getActive()?.markStale()`. The overlay disables Save, shows a "changed in another tab" marker in its header, and blocks a dirty save with an alert — so the user can't silently overwrite newer data with a stale draft. They have to close and reopen the overlay to pick up the new state.
 
 ### Tag management overlay (`src/features/tag-manager.js`)

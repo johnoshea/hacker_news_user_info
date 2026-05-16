@@ -70,17 +70,30 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 	// Re-renders tag groups and updates tag inputs for every instance of a
 	// user on the page. Called after any tag mutation so all comments by the
 	// same author stay in sync.
+	//
+	// Skips any instance whose tag input currently has focus: that input is
+	// the one the user is actively typing into, and the rerender path runs
+	// on every cross-tab state write (including unrelated cache writes like
+	// setCachedUser/setCachedItem from other open HN tabs), which would
+	// otherwise clobber in-progress typing. The tag-group preview next to
+	// that input is also left alone so the renderPreview keystroke handler
+	// stays the source of truth for what the user sees while typing.
 	function rerenderUserTags(username) {
 		const esc = CSS.escape(username);
+		const focusedInput = document.querySelector(
+			`.hn-tag-input[data-hn-user="${esc}"]:focus`,
+		);
 		for (const group of document.querySelectorAll(
 			`.hn-tag-group[data-hn-user="${esc}"]`,
 		)) {
+			if (focusedInput) continue;
 			renderTagGroup(username, group);
 		}
 		const names = store.getUserTags(username).map((t) => t.value);
 		for (const input of document.querySelectorAll(
 			`.hn-tag-input[data-hn-user="${esc}"]`,
 		)) {
+			if (input === focusedInput) continue;
 			input.value = names.join(", ");
 		}
 	}
