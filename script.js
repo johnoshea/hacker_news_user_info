@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+41f0395
+// @version      0.11+12a397b
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -2124,13 +2124,31 @@ function setupHighlightUnreadComments({ store }) {
 	const isFreshSecondVisit =
 		stored !== null && now - stored.fetchedAt <= READ_COMMENTS_TTL_MS;
 
+	let newIds = [];
 	if (isFreshSecondVisit) {
-		const newIds = findNewCommentIds(currentIds, stored.ids);
+		newIds = findNewCommentIds(currentIds, stored.ids);
 		for (const id of newIds) {
 			const row = document.getElementById(id);
 			if (row) row.classList.add("hn-new-comment");
 		}
 	}
+
+	// TEMP DEBUG: one compact line per item-page load so we can diagnose
+	// missing-highlight reports. Remove once #<issue> is resolved.
+	console.log("[hn-debug] highlight-unread", {
+		itemId,
+		visibilityState: document.visibilityState,
+		wasHidden: document.hidden,
+		storedAgeSec: stored ? Math.round((now - stored.fetchedAt) / 1000) : null,
+		storedCount: stored ? stored.ids.length : 0,
+		currentCount: currentIds.length,
+		newCount: newIds.length,
+		isFreshSecondVisit,
+		nav: performance
+			.getEntriesByType("navigation")
+			.map((e) => e.type)
+			.join(",") || null,
+	});
 
 	// Always update the stored snapshot to match what's currently on
 	// the page — next visit's "new" set is derived from this.
