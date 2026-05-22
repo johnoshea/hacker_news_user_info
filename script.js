@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+12a397b
+// @version      0.11+6c57185
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -2144,10 +2144,11 @@ function setupHighlightUnreadComments({ store }) {
 		currentCount: currentIds.length,
 		newCount: newIds.length,
 		isFreshSecondVisit,
-		nav: performance
-			.getEntriesByType("navigation")
-			.map((e) => e.type)
-			.join(",") || null,
+		nav:
+			performance
+				.getEntriesByType("navigation")
+				.map((e) => e.type)
+				.join(",") || null,
 	});
 
 	// Always update the stored snapshot to match what's currently on

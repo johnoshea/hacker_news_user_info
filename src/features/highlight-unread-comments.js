@@ -61,10 +61,11 @@ export function setupHighlightUnreadComments({ store }) {
 		currentCount: currentIds.length,
 		newCount: newIds.length,
 		isFreshSecondVisit,
-		nav: performance
-			.getEntriesByType("navigation")
-			.map((e) => e.type)
-			.join(",") || null,
+		nav:
+			performance
+				.getEntriesByType("navigation")
+				.map((e) => e.type)
+				.join(",") || null,
 	});
 
 	// Always update the stored snapshot to match what's currently on
