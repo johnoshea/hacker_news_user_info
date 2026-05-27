@@ -92,6 +92,40 @@ test("store: _invalidate forces re-read from backend", () => {
 	assert.equal(store.getRating("alice"), 42);
 });
 
+// The cross-tab listener hands the store the old and new raw blobs that
+// GM_addValueChangeListener reports. _applyRemoteChange refreshes the
+// in-memory snapshot (so later reads see the other tab's write without a
+// backend round-trip) and returns the set of users whose tag/rating UI
+// must be re-rendered. A cache-only change returns an empty set, which is
+// how the listener avoids the re-render storm.
+test("store: _applyRemoteChange returns affected users and refreshes the cache", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	store.setRating("alice", 1);
+
+	const oldRaw = backend.data.hn_state;
+	const next = JSON.parse(oldRaw);
+	next.ratings.alice = 9;
+	const newRaw = JSON.stringify(next);
+
+	const affected = store._applyRemoteChange(oldRaw, newRaw);
+	assert.deepEqual(affected, new Set(["alice"]));
+	// In-memory snapshot now reflects the remote write without re-reading.
+	assert.equal(store.getRating("alice"), 9);
+});
+
+test("store: _applyRemoteChange returns an empty set for a cache-only write", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	store.setRating("alice", 1);
+
+	const oldRaw = backend.data.hn_state;
+	const next = JSON.parse(oldRaw);
+	next.cache = { bob: { created: 1, karma: 2, fetchedAt: 100 } };
+	const affected = store._applyRemoteChange(oldRaw, JSON.stringify(next));
+	assert.equal(affected.size, 0);
+});
+
 test("store: everything lives under a single backend key", () => {
 	const backend = makeFakeBackend();
 	const store = createStore(backend);

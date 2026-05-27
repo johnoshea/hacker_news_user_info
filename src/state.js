@@ -36,8 +36,7 @@ export function emptyState() {
 export function createStore(backend) {
 	let state = null;
 
-	const readDisk = () => {
-		const raw = backend.get(STATE_KEY);
+	const parseState = (raw) => {
 		if (raw === undefined || raw === null || raw === "") {
 			return emptyState();
 		}
@@ -48,6 +47,8 @@ export function createStore(backend) {
 			return emptyState();
 		}
 	};
+
+	const readDisk = () => parseState(backend.get(STATE_KEY));
 
 	const load = () => {
 		if (state !== null) return state;
@@ -264,10 +265,22 @@ export function createStore(backend) {
 			return load();
 		},
 		// Drop the in-memory cache so the next read reloads from the backend.
-		// Used when another tab writes to the same key. Mutations don't need
-		// this because they always re-read disk before writing.
+		// Used by the tag-manager save path. Mutations don't need this
+		// because they always re-read disk before writing.
 		_invalidate() {
 			state = null;
+		},
+		// Cross-tab handler. Given the old and new raw blobs that
+		// GM_addValueChangeListener reports for another tab's write, refresh
+		// the in-memory snapshot (so subsequent reads see the write without a
+		// backend round-trip) and return the set of users whose tag/rating UI
+		// must be re-rendered. An empty set means the write touched only
+		// caches, so the listener can skip the re-render entirely.
+		_applyRemoteChange(oldRaw, newRaw) {
+			const oldState = parseState(oldRaw);
+			const newState = parseState(newRaw);
+			state = newState;
+			return affectedUsersByStateChange(oldState, newState);
 		},
 	};
 }
@@ -545,6 +558,66 @@ export function removeTagInState(state, tagName) {
 	delete newColors[tagName];
 
 	return { ...state, tags: newTags, colors: newColors };
+}
+
+// Returns the set of usernames whose inline tag/rating UI would look
+// different after the state changed from `oldState` to `newState`. The
+// cross-tab listener uses this to scope its re-render: the shared blob
+// carries background caches (user/item digests, read-comment lists, watch
+// entries) alongside user data, and a write to any of those must affect
+// nobody. A user is affected when their rating changed, their tag list
+// changed (including order, which is the visible order), or a tag they
+// carry was recoloured.
+export function affectedUsersByStateChange(oldState, newState) {
+	const affected = new Set();
+	const oldRatings = oldState.ratings || {};
+	const newRatings = newState.ratings || {};
+	const oldTags = oldState.tags || {};
+	const newTags = newState.tags || {};
+	const oldColors = oldState.colors || {};
+	const newColors = newState.colors || {};
+
+	for (const user of new Set([
+		...Object.keys(oldRatings),
+		...Object.keys(newRatings),
+	])) {
+		if (oldRatings[user] !== newRatings[user]) affected.add(user);
+	}
+
+	for (const user of new Set([
+		...Object.keys(oldTags),
+		...Object.keys(newTags),
+	])) {
+		if (!sameTagList(oldTags[user], newTags[user])) affected.add(user);
+	}
+
+	const recoloured = new Set();
+	for (const tag of new Set([
+		...Object.keys(oldColors),
+		...Object.keys(newColors),
+	])) {
+		if (!sameColor(oldColors[tag], newColors[tag])) recoloured.add(tag);
+	}
+	if (recoloured.size > 0) {
+		for (const [user, list] of Object.entries(newTags)) {
+			if (list.some((t) => recoloured.has(t))) affected.add(user);
+		}
+	}
+
+	return affected;
+}
+
+function sameTagList(a, b) {
+	const x = a || [];
+	const y = b || [];
+	if (x.length !== y.length) return false;
+	return x.every((v, i) => v === y[i]);
+}
+
+function sameColor(a, b) {
+	if (!a && !b) return true;
+	if (!a || !b) return false;
+	return a.bgColor === b.bgColor && a.textColor === b.textColor;
 }
 
 // Distinct-users-per-tag count. Includes tags that appear only in the

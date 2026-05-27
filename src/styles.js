@@ -213,6 +213,26 @@ export const STYLES = `
       color: #575F94;
       font-weight: 700;
     }
+    /* Compact affordance shown in place of the rating/tag controls for
+       users with no rating or tags yet. Clicking it builds the full
+       controls (see materializeControls in user-render). */
+    .hn-controls-trigger {
+      cursor: pointer;
+      user-select: none;
+      margin-left: 6px;
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--colour-hn-orange);
+      border-radius: var(--border-radius);
+      color: var(--colour-hn-orange);
+      font-weight: bold;
+      line-height: 1;
+      opacity: 0.55;
+    }
+    .hn-controls-trigger:hover { opacity: 1; }
     .hn-toolbar {
       position: fixed;
       top: 10px;

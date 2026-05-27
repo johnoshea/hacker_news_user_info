@@ -59,18 +59,19 @@ const userRender = createUserRender({
 const toolbar = createToolbar({ store, backend });
 
 // Sync state from other tabs. GM_addValueChangeListener fires whenever
-// another tab writes to the same GM storage key. We invalidate the
-// in-memory cache and re-render every user visible on this page.
+// another tab writes to the same GM storage key — including background
+// cache writes (a fetched user/item digest, a watch recheck, a read-comment
+// list). The shared blob carries those caches alongside user data, so we
+// diff the old/new values and only react when a rating, tag, or tag colour
+// actually changed. A cache-only write returns an empty set, so we skip the
+// re-render that would otherwise storm across every open tab.
 if (typeof GM_addValueChangeListener === "function") {
-	GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
+	GM_addValueChangeListener(STATE_KEY, (_name, oldVal, newVal, remote) => {
 		if (!remote) return;
+		const affected = store._applyRemoteChange(oldVal, newVal);
+		if (affected.size === 0) return;
 		tagManager.getActive()?.markStale();
-		store._invalidate();
-		const usernames = new Set();
-		for (const el of document.querySelectorAll("[data-hn-user]")) {
-			usernames.add(el.dataset.hnUser);
-		}
-		for (const username of usernames) {
+		for (const username of affected) {
 			userRender.rerenderUserTags(username);
 			userRender.rerenderUserRatings(username);
 		}

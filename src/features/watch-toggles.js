@@ -48,9 +48,14 @@ export function setupWatchToggles({ store, fetchItem }) {
 		const mainRow = row.querySelector(".hn-main-row");
 		if (!mainRow) continue;
 
-		const tagInput = mainRow.querySelector(".hn-tag-input");
-		// Skip any .hn-main-row that user-render didn't fully populate.
-		if (!tagInput || !mainRow.querySelector(".hn-rating-container")) continue;
+		// The eye sits before the tag input on a materialized row, or before
+		// the compact "+" trigger on a row whose controls are still deferred
+		// (user-render builds controls lazily). A row with neither was never
+		// populated by user-render, so there's nothing to attach to.
+		const anchor =
+			mainRow.querySelector(".hn-tag-input") ||
+			mainRow.querySelector(".hn-controls-trigger");
+		if (!anchor) continue;
 
 		const initiallyWatched = store.getWatchedComment(commentId) !== null;
 
@@ -91,8 +96,9 @@ export function setupWatchToggles({ store, fetchItem }) {
 			});
 		});
 
-		// Insert between the rating container and the tag input.
-		mainRow.insertBefore(icon, tagInput);
+		// Insert before the tag input (materialized row) or the "+" trigger
+		// (deferred row); either way the eye lands to the right of the rating.
+		mainRow.insertBefore(icon, anchor);
 
 		// If watched, mark the row immediately on page load.
 		if (initiallyWatched) {
