@@ -79,6 +79,11 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 	// that input is also left alone so the renderPreview keystroke handler
 	// stays the source of truth for what the user sees while typing.
 	function rerenderUserTags(username) {
+		// A user who has just gained a tag (locally on one comment, or from
+		// another tab) may still be showing the compact "+" trigger on their
+		// other comments. Promote those to full controls so every comment by
+		// the user reflects the new tag.
+		materializeLazyTriggers(username);
 		const esc = CSS.escape(username);
 		const focusedInput = document.querySelector(
 			`.hn-tag-input[data-hn-user="${esc}"]:focus`,
@@ -99,6 +104,10 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 	}
 
 	function rerenderUserRatings(username) {
+		// Same promotion as rerenderUserTags: a freshly-rated user whose other
+		// comments still show the "+" trigger gets those promoted to full
+		// controls so the rating is visible and adjustable everywhere.
+		materializeLazyTriggers(username);
 		const esc = CSS.escape(username);
 		const rating = store.getRating(username);
 		const text = String(rating);
@@ -277,9 +286,85 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 		});
 	}
 
-	// Skeleton-first: every row is built and inserted synchronously from the
-	// store. The age/karma blurb gets filled in as each fetch resolves, so a
-	// slow or hung request can't block the rest of the page.
+	// True when the user already carries data worth showing inline. These
+	// users get their full controls built up front; everyone else gets the
+	// compact "+" trigger and their controls are built only when clicked.
+	function hasUserState(username) {
+		return (
+			store.getRating(username) !== 0 || store.getUserTags(username).length > 0
+		);
+	}
+
+	// Builds the rating controls, tag input, and tag group and inserts them
+	// into an already-rendered row. Used both for the eager path (users who
+	// already have state) and lazily when a "+" trigger is clicked or a user
+	// gains state. The watch eye (inserted later by watch-toggles) is the
+	// pivot: rating goes before it, tag input after it, so eager and
+	// lazily-materialized rows end up with the same left-to-right order.
+	// Idempotent — returns early if the row already has controls.
+	function materializeControls(username, mainRow, layout) {
+		if (mainRow.querySelector(".hn-rating-container")) return null;
+
+		const ratingControls = renderRatingControls(username);
+		const tagInput = renderTagInput(username);
+		const tagGroup = h("div", { class: "hn-tag-group" });
+		tagGroup.dataset.hnUser = username;
+		renderTagGroup(username, tagGroup);
+		const tagContainer = h("div", { class: "hn-tag-container" }, [tagGroup]);
+
+		const trigger = mainRow.querySelector(".hn-controls-trigger");
+		const eye = mainRow.querySelector(".hn-watch-icon");
+		const ratingAnchor = eye || trigger;
+		if (ratingAnchor) mainRow.insertBefore(ratingControls, ratingAnchor);
+		else mainRow.appendChild(ratingControls);
+		if (trigger) {
+			mainRow.insertBefore(tagInput, trigger);
+			trigger.remove();
+		} else {
+			mainRow.appendChild(tagInput);
+		}
+		layout.appendChild(tagContainer);
+		return tagInput;
+	}
+
+	function renderControlsTrigger(username, mainRow, layout) {
+		const trigger = h("span", {
+			class: "hn-controls-trigger",
+			title: "Rate or tag this user",
+			text: "+",
+			onclick: () => {
+				const input = materializeControls(username, mainRow, layout);
+				input?.focus();
+			},
+		});
+		trigger.dataset.hnUser = username;
+		return trigger;
+	}
+
+	// Promote every "+" trigger for a user to full controls — but only once
+	// the user actually has a rating or tag. Called from the rerender paths
+	// so a user who gains state on one comment (or in another tab) has their
+	// other comments promoted too. A genuinely stateless user (e.g. touched
+	// by a tag-manager save that didn't involve them) is left as a trigger.
+	function materializeLazyTriggers(username) {
+		if (!hasUserState(username)) return;
+		const esc = CSS.escape(username);
+		for (const trigger of document.querySelectorAll(
+			`.hn-controls-trigger[data-hn-user="${esc}"]`,
+		)) {
+			const mainRow = trigger.closest(".hn-main-row");
+			const layout = trigger.closest(".hn-post-layout");
+			if (mainRow && layout) materializeControls(username, mainRow, layout);
+		}
+	}
+
+	// Skeleton-first: every row is built and inserted synchronously. The
+	// age/karma blurb gets filled in as each fetch resolves, so a slow or
+	// hung request can't block the rest of the page. Rating/tag controls are
+	// built up front only for users who already have a rating or tag; for the
+	// rest a compact "+" trigger defers that work until the user wants it,
+	// which keeps construction cheap on large threads where most users are
+	// never tagged or rated.
 	function renderAllUsernames() {
 		const usernameElements = Array.from(document.querySelectorAll(".hnuser"));
 		// The OP's username appears in .fatitem above the comments and again
@@ -294,10 +379,6 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 			const username = usernameEl.textContent;
 			const parent = findCommentParent(usernameEl);
 			if (!parent) continue;
-
-			const tagGroup = h("div", { class: "hn-tag-group" });
-			tagGroup.dataset.hnUser = username;
-			renderTagGroup(username, tagGroup);
 
 			const usernameClone = usernameEl.cloneNode(true);
 			usernameClone.className = `${usernameClone.className} hn-username`.trim();
@@ -316,14 +397,14 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 			const mainRow = h("div", { class: "hn-main-row" }, [
 				usernameClone,
 				infoSlot,
-				renderRatingControls(username),
-				renderTagInput(username),
 			]);
-			const tagContainer = h("div", { class: "hn-tag-container" }, [tagGroup]);
-			const layout = h("div", { class: "hn-post-layout" }, [
-				mainRow,
-				tagContainer,
-			]);
+			const layout = h("div", { class: "hn-post-layout" }, [mainRow]);
+
+			if (hasUserState(username)) {
+				materializeControls(username, mainRow, layout);
+			} else {
+				mainRow.appendChild(renderControlsTrigger(username, mainRow, layout));
+			}
 
 			parent.parentNode.insertBefore(layout, parent.nextSibling);
 			usernameEl.style.display = "none";

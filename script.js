@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+6c57185
+// @version      0.11+cddcaa3
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -448,8 +448,7 @@ function emptyState() {
 function createStore(backend) {
 	let state = null;
 
-	const readDisk = () => {
-		const raw = backend.get(STATE_KEY);
+	const parseState = (raw) => {
 		if (raw === undefined || raw === null || raw === "") {
 			return emptyState();
 		}
@@ -460,6 +459,8 @@ function createStore(backend) {
 			return emptyState();
 		}
 	};
+
+	const readDisk = () => parseState(backend.get(STATE_KEY));
 
 	const load = () => {
 		if (state !== null) return state;
@@ -676,10 +677,22 @@ function createStore(backend) {
 			return load();
 		},
 		// Drop the in-memory cache so the next read reloads from the backend.
-		// Used when another tab writes to the same key. Mutations don't need
-		// this because they always re-read disk before writing.
+		// Used by the tag-manager save path. Mutations don't need this
+		// because they always re-read disk before writing.
 		_invalidate() {
 			state = null;
+		},
+		// Cross-tab handler. Given the old and new raw blobs that
+		// GM_addValueChangeListener reports for another tab's write, refresh
+		// the in-memory snapshot (so subsequent reads see the write without a
+		// backend round-trip) and return the set of users whose tag/rating UI
+		// must be re-rendered. An empty set means the write touched only
+		// caches, so the listener can skip the re-render entirely.
+		_applyRemoteChange(oldRaw, newRaw) {
+			const oldState = parseState(oldRaw);
+			const newState = parseState(newRaw);
+			state = newState;
+			return affectedUsersByStateChange(oldState, newState);
 		},
 	};
 }
@@ -957,6 +970,66 @@ function removeTagInState(state, tagName) {
 	delete newColors[tagName];
 
 	return { ...state, tags: newTags, colors: newColors };
+}
+
+// Returns the set of usernames whose inline tag/rating UI would look
+// different after the state changed from `oldState` to `newState`. The
+// cross-tab listener uses this to scope its re-render: the shared blob
+// carries background caches (user/item digests, read-comment lists, watch
+// entries) alongside user data, and a write to any of those must affect
+// nobody. A user is affected when their rating changed, their tag list
+// changed (including order, which is the visible order), or a tag they
+// carry was recoloured.
+function affectedUsersByStateChange(oldState, newState) {
+	const affected = new Set();
+	const oldRatings = oldState.ratings || {};
+	const newRatings = newState.ratings || {};
+	const oldTags = oldState.tags || {};
+	const newTags = newState.tags || {};
+	const oldColors = oldState.colors || {};
+	const newColors = newState.colors || {};
+
+	for (const user of new Set([
+		...Object.keys(oldRatings),
+		...Object.keys(newRatings),
+	])) {
+		if (oldRatings[user] !== newRatings[user]) affected.add(user);
+	}
+
+	for (const user of new Set([
+		...Object.keys(oldTags),
+		...Object.keys(newTags),
+	])) {
+		if (!sameTagList(oldTags[user], newTags[user])) affected.add(user);
+	}
+
+	const recoloured = new Set();
+	for (const tag of new Set([
+		...Object.keys(oldColors),
+		...Object.keys(newColors),
+	])) {
+		if (!sameColor(oldColors[tag], newColors[tag])) recoloured.add(tag);
+	}
+	if (recoloured.size > 0) {
+		for (const [user, list] of Object.entries(newTags)) {
+			if (list.some((t) => recoloured.has(t))) affected.add(user);
+		}
+	}
+
+	return affected;
+}
+
+function sameTagList(a, b) {
+	const x = a || [];
+	const y = b || [];
+	if (x.length !== y.length) return false;
+	return x.every((v, i) => v === y[i]);
+}
+
+function sameColor(a, b) {
+	if (!a && !b) return true;
+	if (!a || !b) return false;
+	return a.bgColor === b.bgColor && a.textColor === b.textColor;
 }
 
 // Distinct-users-per-tag count. Includes tags that appear only in the
@@ -1250,6 +1323,26 @@ const STYLES = `
       color: #575F94;
       font-weight: 700;
     }
+    /* Compact affordance shown in place of the rating/tag controls for
+       users with no rating or tags yet. Clicking it builds the full
+       controls (see materializeControls in user-render). */
+    .hn-controls-trigger {
+      cursor: pointer;
+      user-select: none;
+      margin-left: 6px;
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--colour-hn-orange);
+      border-radius: var(--border-radius);
+      color: var(--colour-hn-orange);
+      font-weight: bold;
+      line-height: 1;
+      opacity: 0.55;
+    }
+    .hn-controls-trigger:hover { opacity: 1; }
     .hn-toolbar {
       position: fixed;
       top: 10px;
@@ -3020,6 +3113,11 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 	// that input is also left alone so the renderPreview keystroke handler
 	// stays the source of truth for what the user sees while typing.
 	function rerenderUserTags(username) {
+		// A user who has just gained a tag (locally on one comment, or from
+		// another tab) may still be showing the compact "+" trigger on their
+		// other comments. Promote those to full controls so every comment by
+		// the user reflects the new tag.
+		materializeLazyTriggers(username);
 		const esc = CSS.escape(username);
 		const focusedInput = document.querySelector(
 			`.hn-tag-input[data-hn-user="${esc}"]:focus`,
@@ -3040,6 +3138,10 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 	}
 
 	function rerenderUserRatings(username) {
+		// Same promotion as rerenderUserTags: a freshly-rated user whose other
+		// comments still show the "+" trigger gets those promoted to full
+		// controls so the rating is visible and adjustable everywhere.
+		materializeLazyTriggers(username);
 		const esc = CSS.escape(username);
 		const rating = store.getRating(username);
 		const text = String(rating);
@@ -3218,9 +3320,85 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 		});
 	}
 
-	// Skeleton-first: every row is built and inserted synchronously from the
-	// store. The age/karma blurb gets filled in as each fetch resolves, so a
-	// slow or hung request can't block the rest of the page.
+	// True when the user already carries data worth showing inline. These
+	// users get their full controls built up front; everyone else gets the
+	// compact "+" trigger and their controls are built only when clicked.
+	function hasUserState(username) {
+		return (
+			store.getRating(username) !== 0 || store.getUserTags(username).length > 0
+		);
+	}
+
+	// Builds the rating controls, tag input, and tag group and inserts them
+	// into an already-rendered row. Used both for the eager path (users who
+	// already have state) and lazily when a "+" trigger is clicked or a user
+	// gains state. The watch eye (inserted later by watch-toggles) is the
+	// pivot: rating goes before it, tag input after it, so eager and
+	// lazily-materialized rows end up with the same left-to-right order.
+	// Idempotent — returns early if the row already has controls.
+	function materializeControls(username, mainRow, layout) {
+		if (mainRow.querySelector(".hn-rating-container")) return null;
+
+		const ratingControls = renderRatingControls(username);
+		const tagInput = renderTagInput(username);
+		const tagGroup = h("div", { class: "hn-tag-group" });
+		tagGroup.dataset.hnUser = username;
+		renderTagGroup(username, tagGroup);
+		const tagContainer = h("div", { class: "hn-tag-container" }, [tagGroup]);
+
+		const trigger = mainRow.querySelector(".hn-controls-trigger");
+		const eye = mainRow.querySelector(".hn-watch-icon");
+		const ratingAnchor = eye || trigger;
+		if (ratingAnchor) mainRow.insertBefore(ratingControls, ratingAnchor);
+		else mainRow.appendChild(ratingControls);
+		if (trigger) {
+			mainRow.insertBefore(tagInput, trigger);
+			trigger.remove();
+		} else {
+			mainRow.appendChild(tagInput);
+		}
+		layout.appendChild(tagContainer);
+		return tagInput;
+	}
+
+	function renderControlsTrigger(username, mainRow, layout) {
+		const trigger = h("span", {
+			class: "hn-controls-trigger",
+			title: "Rate or tag this user",
+			text: "+",
+			onclick: () => {
+				const input = materializeControls(username, mainRow, layout);
+				input?.focus();
+			},
+		});
+		trigger.dataset.hnUser = username;
+		return trigger;
+	}
+
+	// Promote every "+" trigger for a user to full controls — but only once
+	// the user actually has a rating or tag. Called from the rerender paths
+	// so a user who gains state on one comment (or in another tab) has their
+	// other comments promoted too. A genuinely stateless user (e.g. touched
+	// by a tag-manager save that didn't involve them) is left as a trigger.
+	function materializeLazyTriggers(username) {
+		if (!hasUserState(username)) return;
+		const esc = CSS.escape(username);
+		for (const trigger of document.querySelectorAll(
+			`.hn-controls-trigger[data-hn-user="${esc}"]`,
+		)) {
+			const mainRow = trigger.closest(".hn-main-row");
+			const layout = trigger.closest(".hn-post-layout");
+			if (mainRow && layout) materializeControls(username, mainRow, layout);
+		}
+	}
+
+	// Skeleton-first: every row is built and inserted synchronously. The
+	// age/karma blurb gets filled in as each fetch resolves, so a slow or
+	// hung request can't block the rest of the page. Rating/tag controls are
+	// built up front only for users who already have a rating or tag; for the
+	// rest a compact "+" trigger defers that work until the user wants it,
+	// which keeps construction cheap on large threads where most users are
+	// never tagged or rated.
 	function renderAllUsernames() {
 		const usernameElements = Array.from(document.querySelectorAll(".hnuser"));
 		// The OP's username appears in .fatitem above the comments and again
@@ -3235,10 +3413,6 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 			const username = usernameEl.textContent;
 			const parent = findCommentParent(usernameEl);
 			if (!parent) continue;
-
-			const tagGroup = h("div", { class: "hn-tag-group" });
-			tagGroup.dataset.hnUser = username;
-			renderTagGroup(username, tagGroup);
 
 			const usernameClone = usernameEl.cloneNode(true);
 			usernameClone.className = `${usernameClone.className} hn-username`.trim();
@@ -3257,14 +3431,14 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 			const mainRow = h("div", { class: "hn-main-row" }, [
 				usernameClone,
 				infoSlot,
-				renderRatingControls(username),
-				renderTagInput(username),
 			]);
-			const tagContainer = h("div", { class: "hn-tag-container" }, [tagGroup]);
-			const layout = h("div", { class: "hn-post-layout" }, [
-				mainRow,
-				tagContainer,
-			]);
+			const layout = h("div", { class: "hn-post-layout" }, [mainRow]);
+
+			if (hasUserState(username)) {
+				materializeControls(username, mainRow, layout);
+			} else {
+				mainRow.appendChild(renderControlsTrigger(username, mainRow, layout));
+			}
 
 			parent.parentNode.insertBefore(layout, parent.nextSibling);
 			usernameEl.style.display = "none";
@@ -3340,9 +3514,14 @@ function setupWatchToggles({ store, fetchItem }) {
 		const mainRow = row.querySelector(".hn-main-row");
 		if (!mainRow) continue;
 
-		const tagInput = mainRow.querySelector(".hn-tag-input");
-		// Skip any .hn-main-row that user-render didn't fully populate.
-		if (!tagInput || !mainRow.querySelector(".hn-rating-container")) continue;
+		// The eye sits before the tag input on a materialized row, or before
+		// the compact "+" trigger on a row whose controls are still deferred
+		// (user-render builds controls lazily). A row with neither was never
+		// populated by user-render, so there's nothing to attach to.
+		const anchor =
+			mainRow.querySelector(".hn-tag-input") ||
+			mainRow.querySelector(".hn-controls-trigger");
+		if (!anchor) continue;
 
 		const initiallyWatched = store.getWatchedComment(commentId) !== null;
 
@@ -3383,8 +3562,9 @@ function setupWatchToggles({ store, fetchItem }) {
 			});
 		});
 
-		// Insert between the rating container and the tag input.
-		mainRow.insertBefore(icon, tagInput);
+		// Insert before the tag input (materialized row) or the "+" trigger
+		// (deferred row); either way the eye lands to the right of the rating.
+		mainRow.insertBefore(icon, anchor);
 
 		// If watched, mark the row immediately on page load.
 		if (initiallyWatched) {
@@ -4128,18 +4308,19 @@ const userRender = createUserRender({
 const toolbar = createToolbar({ store, backend });
 
 // Sync state from other tabs. GM_addValueChangeListener fires whenever
-// another tab writes to the same GM storage key. We invalidate the
-// in-memory cache and re-render every user visible on this page.
+// another tab writes to the same GM storage key — including background
+// cache writes (a fetched user/item digest, a watch recheck, a read-comment
+// list). The shared blob carries those caches alongside user data, so we
+// diff the old/new values and only react when a rating, tag, or tag colour
+// actually changed. A cache-only write returns an empty set, so we skip the
+// re-render that would otherwise storm across every open tab.
 if (typeof GM_addValueChangeListener === "function") {
-	GM_addValueChangeListener(STATE_KEY, (_name, _oldVal, _newVal, remote) => {
+	GM_addValueChangeListener(STATE_KEY, (_name, oldVal, newVal, remote) => {
 		if (!remote) return;
+		const affected = store._applyRemoteChange(oldVal, newVal);
+		if (affected.size === 0) return;
 		tagManager.getActive()?.markStale();
-		store._invalidate();
-		const usernames = new Set();
-		for (const el of document.querySelectorAll("[data-hn-user]")) {
-			usernames.add(el.dataset.hnUser);
-		}
-		for (const username of usernames) {
+		for (const username of affected) {
 			userRender.rerenderUserTags(username);
 			userRender.rerenderUserRatings(username);
 		}
