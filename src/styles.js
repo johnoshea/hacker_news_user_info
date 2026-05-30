@@ -8,6 +8,9 @@ export const STYLES = `
     :root {
       --colour-hn-orange: #ff6600;
       --colour-hn-orange-pale: rgba(255, 102, 0, 0.05);
+      /* New-account flag. A medium green that reads as "fresh" and sits
+         comfortably beside HN's warm orange accent without clashing. */
+      --colour-hn-new-account: #2f9e44;
       --gutter: 0.5rem;
       --border-radius: 3px;
     }
@@ -142,6 +145,9 @@ export const STYLES = `
       white-space: nowrap;
     }
     .hn-info-pending { opacity: 0.4; }
+    /* Accounts younger than NEW_ACCOUNT_MAX_AGE_MS (src/config.js) get a
+       green age/karma blurb so brand-new users stand out at a glance. */
+    .hn-new-account { color: var(--colour-hn-new-account); }
     .hn-tag-container {
       display: flex;
       flex-direction: column;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+022c028
+// @version      0.11+2b5f98c
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -83,6 +83,12 @@ const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 // even with several active watches.
 const WATCH_RECHECK_THROTTLE_MS = 60 * 1000;
 
+// Accounts younger than this get a green age/karma blurb so brand-new
+// users stand out. "New" is a judgement call, not a fixed fact, so it's a
+// single editable constant here rather than a UI setting — bump it to taste.
+// Expressed in ms (30-day months) to match the other TTL constants above.
+const NEW_ACCOUNT_MAX_AGE_MS = 6 * 30 * 24 * 60 * 60 * 1000;
+
 // Authors whose stored rating sits at or below this value have their
 // comments auto-collapsed on render. Rating defaults to 0, so the
 // threshold must be negative (otherwise every unrated user would
@@ -107,6 +113,16 @@ function timeSince(createdUnixSeconds, nowUnixSeconds) {
 	if (months >= 1) return `${months} month${months === 1 ? "" : "s"}`;
 	const days = Math.floor(seconds / SECONDS_PER_DAY);
 	return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+// True when an account is younger than `maxAgeMs`. `created`/`now` are unix
+// seconds (HN's API units, and what the caller computes for "now"); the
+// threshold is milliseconds to match the TTL constants in config.js. Used by
+// user-render to flag brand-new accounts with a green age/karma blurb. A
+// non-numeric `created` (missing/garbled API response) is treated as not-new.
+function isNewAccount(createdUnixSeconds, nowUnixSeconds, maxAgeMs) {
+	if (typeof createdUnixSeconds !== "number") return false;
+	return (nowUnixSeconds - createdUnixSeconds) * 1000 <= maxAgeMs;
 }
 
 // Strip a leading "> " (with any surrounding whitespace) from a quoted-comment
@@ -1171,6 +1187,9 @@ const STYLES = `
     :root {
       --colour-hn-orange: #ff6600;
       --colour-hn-orange-pale: rgba(255, 102, 0, 0.05);
+      /* New-account flag. A medium green that reads as "fresh" and sits
+         comfortably beside HN's warm orange accent without clashing. */
+      --colour-hn-new-account: #2f9e44;
       --gutter: 0.5rem;
       --border-radius: 3px;
     }
@@ -1305,6 +1324,9 @@ const STYLES = `
       white-space: nowrap;
     }
     .hn-info-pending { opacity: 0.4; }
+    /* Accounts younger than NEW_ACCOUNT_MAX_AGE_MS (src/config.js) get a
+       green age/karma blurb so brand-new users stand out at a glance. */
+    .hn-new-account { color: var(--colour-hn-new-account); }
     .hn-tag-container {
       display: flex;
       flex-direction: column;
@@ -3403,8 +3425,9 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 
 	function renderAccountInfo(created, karma) {
 		const now = Math.floor(Date.now() / 1000);
+		const isNew = isNewAccount(created, now, NEW_ACCOUNT_MAX_AGE_MS);
 		return h("span", {
-			class: "hn-info",
+			class: isNew ? "hn-info hn-new-account" : "hn-info",
 			text: `(${timeSince(created, now)} old, ${karma} karma)`,
 		});
 	}

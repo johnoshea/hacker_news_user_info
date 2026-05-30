@@ -2,9 +2,13 @@
 // editable tag list, plus the rerender-by-user fan-out used after any
 // store write so all comments by the same author stay in sync.
 
-import { LOW_SCORE_COLLAPSE_THRESHOLD } from "../config.js";
+import {
+	LOW_SCORE_COLLAPSE_THRESHOLD,
+	NEW_ACCOUNT_MAX_AGE_MS,
+} from "../config.js";
 import { findCommentParent, h } from "../dom.js";
 import {
+	isNewAccount,
 	parseTagInput,
 	shouldAutoCollapseAuthor,
 	timeSince,
@@ -280,8 +284,9 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 
 	function renderAccountInfo(created, karma) {
 		const now = Math.floor(Date.now() / 1000);
+		const isNew = isNewAccount(created, now, NEW_ACCOUNT_MAX_AGE_MS);
 		return h("span", {
-			class: "hn-info",
+			class: isNew ? "hn-info hn-new-account" : "hn-info",
 			text: `(${timeSince(created, now)} old, ${karma} karma)`,
 		});
 	}
