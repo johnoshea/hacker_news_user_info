@@ -54,6 +54,11 @@ function renderUserPopup(username, data) {
 export function setupUserInfoHover({ fetchUser, popup }) {
 	if (isOnUserPage()) return;
 	for (const link of document.querySelectorAll("a.hnuser")) {
+		// On item pages renderAllUsernames hides each original .hnuser
+		// (display:none) behind a visible clone. Hidden links never fire
+		// mouse events, so wiring dwell listeners to them is pure per-page
+		// retention on large threads — attach only to the visible ones.
+		if (link.style.display === "none") continue;
 		const username = link.textContent;
 		if (!username) continue;
 		popup.attachDwell(

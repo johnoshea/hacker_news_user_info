@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+cddcaa3
+// @version      0.11+022c028
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -199,6 +199,21 @@ function pruneExpiredReadComments(map, nowMs, ttlMs) {
 	for (const [itemId, entry] of Object.entries(map || {})) {
 		if (isReadCommentEntryFresh(entry, nowMs, ttlMs)) {
 			out[itemId] = entry;
+		}
+	}
+	return out;
+}
+
+// Generic prune for the fetchedAt-stamped caches (user digests, item
+// digests). Returns a new map with only entries still within ttlMs of now.
+// Both caches are TTL-checked on read but were otherwise never swept, so a
+// stale key lingered in storage — and was re-parsed into memory on every
+// page load — until the same key happened to be fetched again.
+function pruneExpiredByFetchedAt(map, nowMs, ttlMs) {
+	const out = {};
+	for (const [key, entry] of Object.entries(map || {})) {
+		if (isReadCommentEntryFresh(entry, nowMs, ttlMs)) {
+			out[key] = entry;
 		}
 	}
 	return out;
@@ -502,7 +517,14 @@ function createStore(backend) {
 		},
 		setRating(username, rating) {
 			mutate((s) => {
-				s.ratings[username] = rating;
+				// A zero rating is the absence of a rating — store nothing
+				// rather than a 0 entry that would accumulate for every user
+				// the reader ever nudged and reset.
+				if (rating) {
+					s.ratings[username] = rating;
+				} else {
+					delete s.ratings[username];
+				}
 			});
 		},
 		getUserTags(username) {
@@ -511,7 +533,16 @@ function createStore(backend) {
 		},
 		setUserTags(username, tags) {
 			mutate((s) => {
-				s.tags[username] = tags.map((t) => t.value);
+				// An empty tag list is the absence of tags — drop the key so
+				// users whose tags were all removed don't leave empty arrays
+				// behind. (Shared tag colours are intentionally left in place:
+				// another user may still carry the tag; orphan colours are
+				// swept by the tag-manager / clean-orphan-tags path.)
+				if (tags.length === 0) {
+					delete s.tags[username];
+				} else {
+					s.tags[username] = tags.map((t) => t.value);
+				}
 				// Record any color info that came along with the tag. If a tag
 				// already has a color, a caller-supplied color overrides it
 				// (setTagColor is the explicit "update the shared color"
@@ -566,6 +597,28 @@ function createStore(backend) {
 		setCachedItem(itemId, digest, nowMs) {
 			mutate((s) => {
 				s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
+			});
+		},
+		// Drop expired entries from the user- and item-digest caches. Both
+		// are TTL-checked on read but otherwise never swept, so without this
+		// a key fetched once stayed in storage forever and was re-parsed on
+		// every load. Run once per page load; one RMW write covers both maps.
+		pruneCaches(nowMs, userTtlMs, itemTtlMs) {
+			mutate((s) => {
+				const oldCache = s.cache || {};
+				const oldItemCache = s.itemCache || {};
+				const newCache = pruneExpiredByFetchedAt(oldCache, nowMs, userTtlMs);
+				const newItemCache = pruneExpiredByFetchedAt(
+					oldItemCache,
+					nowMs,
+					itemTtlMs,
+				);
+				const unchanged =
+					Object.keys(newCache).length === Object.keys(oldCache).length &&
+					Object.keys(newItemCache).length === Object.keys(oldItemCache).length;
+				if (unchanged) return false;
+				s.cache = newCache;
+				s.itemCache = newItemCache;
 			});
 		},
 
@@ -2440,6 +2493,11 @@ function renderUserPopup(username, data) {
 function setupUserInfoHover({ fetchUser, popup }) {
 	if (isOnUserPage()) return;
 	for (const link of document.querySelectorAll("a.hnuser")) {
+		// On item pages renderAllUsernames hides each original .hnuser
+		// (display:none) behind a visible clone. Hidden links never fire
+		// mouse events, so wiring dwell listeners to them is pure per-page
+		// retention on large threads — attach only to the visible ones.
+		if (link.style.display === "none") continue;
 		const username = link.textContent;
 		if (!username) continue;
 		popup.attachDwell(
@@ -2952,6 +3010,28 @@ function isClickModified(event) {
 	);
 }
 
+// Tear down whatever this comment currently has open — an injected form,
+// an in-flight fetch's loader, or both — and restore the active button's
+// label. Safe to call when nothing is active.
+function clearActive(state) {
+	if (state.activeForm) {
+		state.activeForm.remove();
+		state.activeForm = null;
+	}
+	if (state.activeLoader) {
+		state.activeLoader.remove();
+		state.activeLoader = null;
+	}
+	const btn = state.activeButton;
+	if (btn) {
+		if (btn.dataset.hnOriginal) {
+			btn.textContent = btn.dataset.hnOriginal;
+			btn.dataset.hnOriginal = "";
+		}
+		state.activeButton = null;
+	}
+}
+
 function attachActionLink(link, replyDiv, state) {
 	const originalText = link.textContent;
 
@@ -2963,21 +3043,16 @@ function attachActionLink(link, replyDiv, state) {
 
 		const quoted = quoteSelection();
 
-		// If a form is currently open from any action on this comment,
-		// remove it. If the same button was clicked, that's the toggle-
-		// off path; if a different button, fall through after removal
-		// to fetch the new form.
-		if (state.activeForm) {
-			state.activeForm.remove();
-			state.activeForm = null;
-			if (state.activeButton) {
-				state.activeButton.textContent = state.activeButton.dataset.hnOriginal;
-				state.activeButton.dataset.hnOriginal = "";
-			}
-			const wasSameButton = state.activeButton === link;
-			state.activeButton = null;
-			if (wasSameButton) return;
-		}
+		// Clear any form OR in-flight fetch on this comment, then bump the
+		// sequence token. The bump supersedes any earlier click whose fetch
+		// is still in flight, so a second click (this button or another
+		// action on the same comment) can never leave an orphaned form
+		// behind. A click on the already-active button is the toggle-off.
+		const wasSameButton =
+			state.activeButton === link && (state.activeForm || state.activeLoader);
+		clearActive(state);
+		const myToken = ++state.seq;
+		if (wasSameButton) return;
 
 		// Visual cue while the fetch is in flight.
 		const loader = h("span", {
@@ -2985,10 +3060,17 @@ function attachActionLink(link, replyDiv, state) {
 			text: " (loading…)",
 		});
 		link.after(loader);
+		state.activeButton = link;
+		state.activeLoader = loader;
 
 		const dom = await fetchPageDom(link.href);
+		// A later click superseded us mid-fetch: it already cleared our
+		// loader and owns the comment now. Drop this result silently.
+		if (myToken !== state.seq) return;
+		state.activeLoader = null;
 		loader.remove();
 		if (!dom) {
+			state.activeButton = null;
 			alert(
 				"Couldn't load the form for that action. Try clicking the link directly to navigate to the page.",
 			);
@@ -2996,6 +3078,7 @@ function attachActionLink(link, replyDiv, state) {
 		}
 		const form = dom.querySelector("form");
 		if (!form) {
+			state.activeButton = null;
 			alert(
 				"The fetched page didn't contain a form. Try clicking the link directly.",
 			);
@@ -3004,7 +3087,6 @@ function attachActionLink(link, replyDiv, state) {
 		form.classList.add("hn-injected-form");
 
 		state.activeForm = form;
-		state.activeButton = link;
 		link.dataset.hnOriginal = originalText;
 		link.textContent = `hide ${originalText}`;
 		replyDiv.append(form);
@@ -3024,8 +3106,15 @@ function setupReplyInline() {
 		if (!replyDiv) continue;
 
 		// Per-comment shared state across the action buttons so opening
-		// one form auto-closes another on the same comment.
-		const state = { activeForm: null, activeButton: null };
+		// one form auto-closes another on the same comment. `activeLoader`
+		// tracks the in-flight fetch's spinner; `seq` is a monotonic token
+		// that lets a newer click supersede an older one's pending fetch.
+		const state = {
+			activeForm: null,
+			activeButton: null,
+			activeLoader: null,
+			seq: 0,
+		};
 
 		for (const action of ["reply", "edit", "delete-confirm"]) {
 			const link = comment.querySelector(`a[href^="${action}"]`);
@@ -3710,6 +3799,11 @@ function setupWatchedListingHighlights({ store, fetchItem }) {
 	const table = getStoryListTable();
 	if (!table) return;
 
+	// Sweep expired watches here too. The item-page toggle pass also prunes,
+	// but a user who mostly browses listing pages would otherwise keep stale
+	// watch entries loaded and rechecked long past their TTL.
+	store.pruneWatchedComments(Date.now(), WATCH_TTL_MS);
+
 	const grouped = watchesByItemId(store.getWatchedComments());
 	if (Object.keys(grouped).length === 0) return;
 
@@ -4214,22 +4308,35 @@ function createToolbar({ store, backend }) {
 		document.body.appendChild(toolbar);
 
 		// Drag listeners live only for the duration of a drag, rather than
-		// sitting on document forever.
+		// sitting on document forever. Refs are held outside the handler so
+		// stopDrag can remove the exact pair — a missed mouseup (e.g. the
+		// window losing focus mid-drag) would otherwise strand them, and the
+		// stale mousemove would keep repositioning the toolbar. stopDrag runs
+		// on mouseup, on window blur, and defensively at the start of each
+		// new drag, so at most one pair is ever attached.
+		let onMove = null;
+		let onUp = null;
+		const stopDrag = () => {
+			if (onMove) document.removeEventListener("mousemove", onMove);
+			if (onUp) document.removeEventListener("mouseup", onUp);
+			onMove = null;
+			onUp = null;
+		};
+		window.addEventListener("blur", stopDrag);
+
 		dragHandle.addEventListener("mousedown", (e) => {
+			stopDrag();
 			const rect = toolbar.getBoundingClientRect();
 			const offsetX = e.clientX - rect.left;
 			const offsetY = e.clientY - rect.top;
 			e.preventDefault();
 
-			const onMove = (ev) => {
+			onMove = (ev) => {
 				toolbar.style.left = `${ev.clientX - offsetX}px`;
 				toolbar.style.top = `${ev.clientY - offsetY}px`;
 				toolbar.style.right = "auto";
 			};
-			const onUp = () => {
-				document.removeEventListener("mousemove", onMove);
-				document.removeEventListener("mouseup", onUp);
-			};
+			onUp = stopDrag;
 			document.addEventListener("mousemove", onMove);
 			document.addEventListener("mouseup", onUp);
 		});
@@ -4290,6 +4397,9 @@ const backend = {
 
 migrateLegacyKeys(backend);
 const store = createStore(backend);
+// Sweep expired user/item digests once per load — they're TTL-checked on
+// read but otherwise never pruned, so stale keys would accumulate in storage.
+store.pruneCaches(Date.now(), USER_CACHE_TTL_MS, ITEM_CACHE_TTL_MS);
 const { fetchUser, fetchItem } = createApi({ store });
 const hoverPopup = createHoverPopup();
 

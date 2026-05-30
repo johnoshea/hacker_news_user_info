@@ -8,7 +8,7 @@
 // (matches setupSortStories' approach so the call site in main.js
 // stays simple).
 
-import { WATCH_RECHECK_THROTTLE_MS } from "../config.js";
+import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
 import { getStoryListTable } from "../dom.js";
 import { isWatchCheckStale, watchesByItemId } from "../parsing.js";
 
@@ -26,6 +26,11 @@ function findCommentsLink(athingRow) {
 export function setupWatchedListingHighlights({ store, fetchItem }) {
 	const table = getStoryListTable();
 	if (!table) return;
+
+	// Sweep expired watches here too. The item-page toggle pass also prunes,
+	// but a user who mostly browses listing pages would otherwise keep stale
+	// watch entries loaded and rechecked long past their TTL.
+	store.pruneWatchedComments(Date.now(), WATCH_TTL_MS);
 
 	const grouped = watchesByItemId(store.getWatchedComments());
 	if (Object.keys(grouped).length === 0) return;
