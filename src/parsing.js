@@ -14,6 +14,16 @@ export function timeSince(createdUnixSeconds, nowUnixSeconds) {
 	return `${days} day${days === 1 ? "" : "s"}`;
 }
 
+// True when an account is younger than `maxAgeMs`. `created`/`now` are unix
+// seconds (HN's API units, and what the caller computes for "now"); the
+// threshold is milliseconds to match the TTL constants in config.js. Used by
+// user-render to flag brand-new accounts with a green age/karma blurb. A
+// non-numeric `created` (missing/garbled API response) is treated as not-new.
+export function isNewAccount(createdUnixSeconds, nowUnixSeconds, maxAgeMs) {
+	if (typeof createdUnixSeconds !== "number") return false;
+	return (nowUnixSeconds - createdUnixSeconds) * 1000 <= maxAgeMs;
+}
+
 // Strip a leading "> " (with any surrounding whitespace) from a quoted-comment
 // text node, then trim the result. Used by the quote-rendering pass to set
 // the body of a `<p class="quote">` directly. Defensive against non-strings

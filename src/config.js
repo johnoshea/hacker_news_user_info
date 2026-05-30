@@ -62,6 +62,12 @@ export const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 // even with several active watches.
 export const WATCH_RECHECK_THROTTLE_MS = 60 * 1000;
 
+// Accounts younger than this get a green age/karma blurb so brand-new
+// users stand out. "New" is a judgement call, not a fixed fact, so it's a
+// single editable constant here rather than a UI setting — bump it to taste.
+// Expressed in ms (30-day months) to match the other TTL constants above.
+export const NEW_ACCOUNT_MAX_AGE_MS = 6 * 30 * 24 * 60 * 60 * 1000;
+
 // Authors whose stored rating sits at or below this value have their
 // comments auto-collapsed on render. Rating defaults to 0, so the
 // threshold must be negative (otherwise every unrated user would
