@@ -72,22 +72,35 @@ export function createToolbar({ store, backend }) {
 		document.body.appendChild(toolbar);
 
 		// Drag listeners live only for the duration of a drag, rather than
-		// sitting on document forever.
+		// sitting on document forever. Refs are held outside the handler so
+		// stopDrag can remove the exact pair — a missed mouseup (e.g. the
+		// window losing focus mid-drag) would otherwise strand them, and the
+		// stale mousemove would keep repositioning the toolbar. stopDrag runs
+		// on mouseup, on window blur, and defensively at the start of each
+		// new drag, so at most one pair is ever attached.
+		let onMove = null;
+		let onUp = null;
+		const stopDrag = () => {
+			if (onMove) document.removeEventListener("mousemove", onMove);
+			if (onUp) document.removeEventListener("mouseup", onUp);
+			onMove = null;
+			onUp = null;
+		};
+		window.addEventListener("blur", stopDrag);
+
 		dragHandle.addEventListener("mousedown", (e) => {
+			stopDrag();
 			const rect = toolbar.getBoundingClientRect();
 			const offsetX = e.clientX - rect.left;
 			const offsetY = e.clientY - rect.top;
 			e.preventDefault();
 
-			const onMove = (ev) => {
+			onMove = (ev) => {
 				toolbar.style.left = `${ev.clientX - offsetX}px`;
 				toolbar.style.top = `${ev.clientY - offsetY}px`;
 				toolbar.style.right = "auto";
 			};
-			const onUp = () => {
-				document.removeEventListener("mousemove", onMove);
-				document.removeEventListener("mouseup", onUp);
-			};
+			onUp = stopDrag;
 			document.addEventListener("mousemove", onMove);
 			document.addEventListener("mouseup", onUp);
 		});

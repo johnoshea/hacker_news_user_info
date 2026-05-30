@@ -64,6 +64,28 @@ function isClickModified(event) {
 	);
 }
 
+// Tear down whatever this comment currently has open — an injected form,
+// an in-flight fetch's loader, or both — and restore the active button's
+// label. Safe to call when nothing is active.
+function clearActive(state) {
+	if (state.activeForm) {
+		state.activeForm.remove();
+		state.activeForm = null;
+	}
+	if (state.activeLoader) {
+		state.activeLoader.remove();
+		state.activeLoader = null;
+	}
+	const btn = state.activeButton;
+	if (btn) {
+		if (btn.dataset.hnOriginal) {
+			btn.textContent = btn.dataset.hnOriginal;
+			btn.dataset.hnOriginal = "";
+		}
+		state.activeButton = null;
+	}
+}
+
 function attachActionLink(link, replyDiv, state) {
 	const originalText = link.textContent;
 
@@ -75,21 +97,16 @@ function attachActionLink(link, replyDiv, state) {
 
 		const quoted = quoteSelection();
 
-		// If a form is currently open from any action on this comment,
-		// remove it. If the same button was clicked, that's the toggle-
-		// off path; if a different button, fall through after removal
-		// to fetch the new form.
-		if (state.activeForm) {
-			state.activeForm.remove();
-			state.activeForm = null;
-			if (state.activeButton) {
-				state.activeButton.textContent = state.activeButton.dataset.hnOriginal;
-				state.activeButton.dataset.hnOriginal = "";
-			}
-			const wasSameButton = state.activeButton === link;
-			state.activeButton = null;
-			if (wasSameButton) return;
-		}
+		// Clear any form OR in-flight fetch on this comment, then bump the
+		// sequence token. The bump supersedes any earlier click whose fetch
+		// is still in flight, so a second click (this button or another
+		// action on the same comment) can never leave an orphaned form
+		// behind. A click on the already-active button is the toggle-off.
+		const wasSameButton =
+			state.activeButton === link && (state.activeForm || state.activeLoader);
+		clearActive(state);
+		const myToken = ++state.seq;
+		if (wasSameButton) return;
 
 		// Visual cue while the fetch is in flight.
 		const loader = h("span", {
@@ -97,10 +114,17 @@ function attachActionLink(link, replyDiv, state) {
 			text: " (loading…)",
 		});
 		link.after(loader);
+		state.activeButton = link;
+		state.activeLoader = loader;
 
 		const dom = await fetchPageDom(link.href);
+		// A later click superseded us mid-fetch: it already cleared our
+		// loader and owns the comment now. Drop this result silently.
+		if (myToken !== state.seq) return;
+		state.activeLoader = null;
 		loader.remove();
 		if (!dom) {
+			state.activeButton = null;
 			alert(
 				"Couldn't load the form for that action. Try clicking the link directly to navigate to the page.",
 			);
@@ -108,6 +132,7 @@ function attachActionLink(link, replyDiv, state) {
 		}
 		const form = dom.querySelector("form");
 		if (!form) {
+			state.activeButton = null;
 			alert(
 				"The fetched page didn't contain a form. Try clicking the link directly.",
 			);
@@ -116,7 +141,6 @@ function attachActionLink(link, replyDiv, state) {
 		form.classList.add("hn-injected-form");
 
 		state.activeForm = form;
-		state.activeButton = link;
 		link.dataset.hnOriginal = originalText;
 		link.textContent = `hide ${originalText}`;
 		replyDiv.append(form);
@@ -137,8 +161,15 @@ export function setupReplyInline() {
 		if (!replyDiv) continue;
 
 		// Per-comment shared state across the action buttons so opening
-		// one form auto-closes another on the same comment.
-		const state = { activeForm: null, activeButton: null };
+		// one form auto-closes another on the same comment. `activeLoader`
+		// tracks the in-flight fetch's spinner; `seq` is a monotonic token
+		// that lets a newer click supersede an older one's pending fetch.
+		const state = {
+			activeForm: null,
+			activeButton: null,
+			activeLoader: null,
+			seq: 0,
+		};
 
 		for (const action of ["reply", "edit", "delete-confirm"]) {
 			const link = comment.querySelector(`a[href^="${action}"]`);

@@ -9,7 +9,11 @@ import {
 	STATE_KEY,
 	STATE_SCHEMA_VERSION,
 } from "./config.js";
-import { pruneExpiredReadComments, pruneExpiredWatches } from "./parsing.js";
+import {
+	pruneExpiredByFetchedAt,
+	pruneExpiredReadComments,
+	pruneExpiredWatches,
+} from "./parsing.js";
 
 export function emptyState() {
 	return {
@@ -90,7 +94,14 @@ export function createStore(backend) {
 		},
 		setRating(username, rating) {
 			mutate((s) => {
-				s.ratings[username] = rating;
+				// A zero rating is the absence of a rating — store nothing
+				// rather than a 0 entry that would accumulate for every user
+				// the reader ever nudged and reset.
+				if (rating) {
+					s.ratings[username] = rating;
+				} else {
+					delete s.ratings[username];
+				}
 			});
 		},
 		getUserTags(username) {
@@ -99,7 +110,16 @@ export function createStore(backend) {
 		},
 		setUserTags(username, tags) {
 			mutate((s) => {
-				s.tags[username] = tags.map((t) => t.value);
+				// An empty tag list is the absence of tags — drop the key so
+				// users whose tags were all removed don't leave empty arrays
+				// behind. (Shared tag colours are intentionally left in place:
+				// another user may still carry the tag; orphan colours are
+				// swept by the tag-manager / clean-orphan-tags path.)
+				if (tags.length === 0) {
+					delete s.tags[username];
+				} else {
+					s.tags[username] = tags.map((t) => t.value);
+				}
 				// Record any color info that came along with the tag. If a tag
 				// already has a color, a caller-supplied color overrides it
 				// (setTagColor is the explicit "update the shared color"
@@ -154,6 +174,28 @@ export function createStore(backend) {
 		setCachedItem(itemId, digest, nowMs) {
 			mutate((s) => {
 				s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
+			});
+		},
+		// Drop expired entries from the user- and item-digest caches. Both
+		// are TTL-checked on read but otherwise never swept, so without this
+		// a key fetched once stayed in storage forever and was re-parsed on
+		// every load. Run once per page load; one RMW write covers both maps.
+		pruneCaches(nowMs, userTtlMs, itemTtlMs) {
+			mutate((s) => {
+				const oldCache = s.cache || {};
+				const oldItemCache = s.itemCache || {};
+				const newCache = pruneExpiredByFetchedAt(oldCache, nowMs, userTtlMs);
+				const newItemCache = pruneExpiredByFetchedAt(
+					oldItemCache,
+					nowMs,
+					itemTtlMs,
+				);
+				const unchanged =
+					Object.keys(newCache).length === Object.keys(oldCache).length &&
+					Object.keys(newItemCache).length === Object.keys(oldItemCache).length;
+				if (unchanged) return false;
+				s.cache = newCache;
+				s.itemCache = newItemCache;
 			});
 		},
 

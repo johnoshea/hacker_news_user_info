@@ -51,3 +51,49 @@ test("cache: setCachedUser overwrites fetchedAt", () => {
 	const hit = store.getCachedUser("alice", 5000, HOUR_MS);
 	assert.equal(hit.karma, 99);
 });
+
+test("pruneCaches: drops stale user and item entries, keeps fresh", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	const t0 = 1_000_000_000_000;
+	store.setCachedUser("fresh", { created: 1, karma: 2 }, t0);
+	store.setCachedUser("stale", { created: 1, karma: 2 }, t0 - 2 * HOUR_MS);
+	store.setCachedItem("100", { title: "fresh item" }, t0);
+	store.setCachedItem("200", { title: "stale item" }, t0 - 2 * HOUR_MS);
+
+	store.pruneCaches(t0, HOUR_MS, HOUR_MS);
+
+	const blob = JSON.parse(backend.data.hn_state);
+	assert.deepEqual(Object.keys(blob.cache), ["fresh"]);
+	assert.deepEqual(Object.keys(blob.itemCache), ["100"]);
+});
+
+test("pruneCaches: no write when nothing is stale", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	const t0 = 1_000_000_000_000;
+	store.setCachedUser("alice", { created: 1, karma: 2 }, t0);
+	const before = backend.data.hn_state;
+	store.pruneCaches(t0, HOUR_MS, HOUR_MS);
+	// mutate() skips the backend.set when the mutator returns false, so the
+	// stored blob reference is untouched.
+	assert.equal(backend.data.hn_state, before);
+});
+
+test("setRating: a zero rating removes the entry rather than storing 0", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	store.setRating("alice", 3);
+	store.setRating("alice", 0);
+	assert.equal(store.getRating("alice"), 0);
+	assert.deepEqual(Object.keys(JSON.parse(backend.data.hn_state).ratings), []);
+});
+
+test("setUserTags: an empty list removes the user key rather than storing []", () => {
+	const backend = makeFakeBackend();
+	const store = createStore(backend);
+	store.setUserTags("alice", [{ value: "spammer" }]);
+	store.setUserTags("alice", []);
+	assert.deepEqual(store.getUserTags("alice"), []);
+	assert.deepEqual(Object.keys(JSON.parse(backend.data.hn_state).tags), []);
+});

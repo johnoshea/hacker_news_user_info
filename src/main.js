@@ -3,7 +3,7 @@
 // everything below runs once on load inside the userscript runtime.
 
 import { createApi } from "./api.js";
-import { STATE_KEY } from "./config.js";
+import { ITEM_CACHE_TTL_MS, STATE_KEY, USER_CACHE_TTL_MS } from "./config.js";
 import { isItemPage } from "./dom.js";
 import { setupAutoCollapseLowScore } from "./features/auto-collapse-low-score.js";
 import { transformBackticksToMonospace } from "./features/backticks-to-monospace.js";
@@ -41,6 +41,9 @@ const backend = {
 
 migrateLegacyKeys(backend);
 const store = createStore(backend);
+// Sweep expired user/item digests once per load — they're TTL-checked on
+// read but otherwise never pruned, so stale keys would accumulate in storage.
+store.pruneCaches(Date.now(), USER_CACHE_TTL_MS, ITEM_CACHE_TTL_MS);
 const { fetchUser, fetchItem } = createApi({ store });
 const hoverPopup = createHoverPopup();
 

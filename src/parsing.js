@@ -109,6 +109,21 @@ export function pruneExpiredReadComments(map, nowMs, ttlMs) {
 	return out;
 }
 
+// Generic prune for the fetchedAt-stamped caches (user digests, item
+// digests). Returns a new map with only entries still within ttlMs of now.
+// Both caches are TTL-checked on read but were otherwise never swept, so a
+// stale key lingered in storage — and was re-parsed into memory on every
+// page load — until the same key happened to be fetched again.
+export function pruneExpiredByFetchedAt(map, nowMs, ttlMs) {
+	const out = {};
+	for (const [key, entry] of Object.entries(map || {})) {
+		if (isReadCommentEntryFresh(entry, nowMs, ttlMs)) {
+			out[key] = entry;
+		}
+	}
+	return out;
+}
+
 // Truncate a string to at most maxLen characters, appending an ellipsis
 // (…) when the original was longer. Used by the hover popups to keep
 // long item-text or user-about previews from overflowing the popup.

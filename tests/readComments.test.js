@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
 	findNewCommentIds,
 	isReadCommentEntryFresh,
+	pruneExpiredByFetchedAt,
 	pruneExpiredReadComments,
 } from "../src/parsing.js";
 
@@ -89,4 +90,16 @@ test("pruneExpiredReadComments: keeps fresh, drops stale", () => {
 test("pruneExpiredReadComments: empty map is empty", () => {
 	assert.deepEqual(pruneExpiredReadComments({}, 100, TTL_MS), {});
 	assert.deepEqual(pruneExpiredReadComments(null, 100, TTL_MS), {});
+});
+
+test("pruneExpiredByFetchedAt: keeps fresh, drops stale, tolerates null", () => {
+	const now = 1_000_000_000_000;
+	const map = {
+		alice: { karma: 1, fetchedAt: now - DAY_MS },
+		bob: { karma: 2, fetchedAt: now - 5 * DAY_MS },
+		carol: { karma: 3, fetchedAt: now },
+	};
+	const pruned = pruneExpiredByFetchedAt(map, now, TTL_MS);
+	assert.deepEqual(Object.keys(pruned).sort(), ["alice", "carol"]);
+	assert.deepEqual(pruneExpiredByFetchedAt(null, now, TTL_MS), {});
 });
