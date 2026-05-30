@@ -133,6 +133,7 @@ All state lives under a single `hn_state` key (`STATE_KEY` in `src/config.js`) w
   tags:    { <user>: [<tagName>, ...] },
   colors:  { <tagName>: { bgColor, textColor } },
   cache:   { <user>: { created, karma, fetchedAt } },
+  readComments: { <itemId>: { ids: [...], fetchedAt } },
   itemCache: { <itemId>: { title, ..., kids, fetchedAt } },
   watchedComments: { <commentId>: { itemId, seenKids, latestKids, lastCheckedAt, addedAt } } }
 ```
