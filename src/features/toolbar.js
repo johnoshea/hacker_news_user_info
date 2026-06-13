@@ -1,11 +1,10 @@
 // Floating toolbar with Save state / Restore state buttons. Mounted on
 // item pages.
 
-import { STATE_KEY } from "../config.js";
 import { h } from "../dom.js";
 import { parseImport, stateToExport } from "../state.js";
 
-export function createToolbar({ store, backend }) {
+export function createToolbar({ store }) {
 	let buttonsContainer = null;
 
 	function exportState() {
@@ -36,9 +35,9 @@ export function createToolbar({ store, backend }) {
 				try {
 					const raw = JSON.parse(e.target.result);
 					const parsed = parseImport(raw);
-					// Write the consolidated blob directly and reload so the page
-					// rebuilds from a fresh store.
-					backend.set(STATE_KEY, JSON.stringify(parsed));
+					// Replace every slice (user data + caches/watches) and reload
+					// so the page rebuilds from a fresh store.
+					store.replaceAll(parsed);
 					alert("Data imported successfully! The page will now reload.");
 					location.reload();
 				} catch (error) {

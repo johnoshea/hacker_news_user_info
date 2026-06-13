@@ -1,8 +1,13 @@
-// Single backend key holding all user-visible state. Consolidating everything
-// here means exports are one JSON.stringify and imports are one assignment,
-// and it eliminates the legacy prefix-scan over GM_listValues.
+// Storage is split across two keys. hn_state holds the user's curated data
+// (ratings, tags, tag colours) — written only on explicit edits, so cross-tab
+// writes to it are rare. hn_cache holds the churny background caches (user/item
+// digests, read-comment lists, watch entries) that the page-load fetch storm
+// rewrites constantly. Keeping them apart stops a cache write from clobbering a
+// just-clicked rating: the two no longer share a whole-blob overwrite, and the
+// cross-tab listener only watches hn_state. See migrateCacheKeySplit in state.js.
 export const STATE_KEY = "hn_state";
-export const STATE_SCHEMA_VERSION = 1;
+export const CACHE_KEY = "hn_cache";
+export const STATE_SCHEMA_VERSION = 2;
 
 // Pre-0.4 storage layout. Migration reads these on first run; after that the
 // keys are left in place for one version as a rollback safety net.

@@ -26,7 +26,11 @@ import { createUserRender } from "./features/user-render.js";
 import { setupWatchToggles } from "./features/watch-toggles.js";
 import { setupWatchedCommentNav } from "./features/watched-comment-nav.js";
 import { setupWatchedListingHighlights } from "./features/watched-listing-highlights.js";
-import { createStore, migrateLegacyKeys } from "./state.js";
+import {
+	createStore,
+	migrateCacheKeySplit,
+	migrateLegacyKeys,
+} from "./state.js";
 import { STYLES } from "./styles.js";
 
 GM_addStyle(STYLES);
@@ -40,6 +44,9 @@ const backend = {
 };
 
 migrateLegacyKeys(backend);
+// Split the pre-0.11 single-key layout: move the background caches off the
+// user-data key so a cache write can't clobber a rating. No-op once migrated.
+migrateCacheKeySplit(backend);
 const store = createStore(backend);
 // Sweep expired user/item digests once per load — they're TTL-checked on
 // read but otherwise never pruned, so stale keys would accumulate in storage.
@@ -59,7 +66,7 @@ const userRender = createUserRender({
 	fetchUser,
 	openTagManager: () => tagManager.open(),
 });
-const toolbar = createToolbar({ store, backend });
+const toolbar = createToolbar({ store });
 
 // Sync state from other tabs. GM_addValueChangeListener fires whenever
 // another tab writes to the same GM storage key — including background

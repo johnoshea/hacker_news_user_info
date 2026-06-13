@@ -57,14 +57,22 @@ shape; if HN renames these, the corresponding feature breaks.
 - **item page** — `/item?id=*`; detected by `isItemPage()`.
 - **listing page** — any page whose story table resolves via
   `getStoryListTable()` (front page, `/newest`, `/show`, etc.).
-- **the blob** — the single `hn_state` JSON value holding all persisted state.
-  Every map in it is keyed by username, item id, or comment id.
-- **store / backend** — `store` (from `createStore`) is the typed accessor over
-  the blob; `backend` is the thin `{get, set, list}` adapter around the `GM_*`
-  storage APIs that the store writes through.
+- **`hn_state` / `hn_cache`** — the two `GM` storage values holding persisted
+  state. **`hn_state`** holds curated user data (ratings, tags, tag colours),
+  written only on explicit edits. **`hn_cache`** holds the regenerable
+  background caches (user/item digests, read-comment lists, watched comments),
+  rewritten constantly by the page-load fetch storm. Splitting them keeps that
+  storm off the key carrying ratings, so a cache write can't clobber a rating.
+  Maps in each are keyed by username, item id, or comment id.
+- **store / backend** — `store` (from `createStore`) is the typed accessor that
+  merges both keys into one in-memory snapshot; `backend` is the thin
+  `{get, set, list}` adapter around the `GM_*` storage APIs the store writes
+  through (`mutateUser` → `hn_state`, `mutateCache` → `hn_cache`).
 - **RMW (read-modify-write)** — the mutation discipline for every store setter:
-  re-read the blob, apply the change, write it back. Makes concurrent writes
-  from multiple open HN tabs safe.
+  re-read the key, apply the change, write it back. Makes *same-tab* sequential
+  writes safe; cross-tab safety for curated data comes from the key split, since
+  a tab's `GM_getValue` only sees another tab's write after an async listener
+  delivery and so RMW alone can't serialize writes across tabs.
 - **digest** — a cached summary object for a user or item, as returned by
   `fetchUser`/`fetchItem`, with its internal `fetchedAt` stamp stripped off.
 - **fresh fetch** — a `fetchItem(id, { fresh: true })` that bypasses the
@@ -94,8 +102,9 @@ shape; if HN renames these, the corresponding feature breaks.
   rated, so their controls aren't built up front: they get a compact `+`
   trigger, and *materializing* it (on click, or when the user gains state)
   builds the real rating/tag controls in place.
-- **affected users / rerender fan-out** — on a cross-tab state change, the set
-  of users whose visible tag/rating UI actually changed. The cross-tab listener
-  re-renders only those, skipping cache-only writes entirely.
+- **affected users / rerender fan-out** — on a remote `hn_state` write, the set
+  of users whose visible tag/rating UI actually changed (`affectedUsersByStateChange`).
+  The cross-tab listener re-renders only those. Cache writes go to `hn_cache`,
+  which has no listener, so they never trigger a fan-out at all.
 - **pure-logic boundary** — `src/config.js`, `src/parsing.js`, `src/state.js`:
   no `document`/`window`/`GM_*`. The only modules tests import directly.

@@ -3,6 +3,7 @@
 // {get, set, list} backend that createStore expects.
 
 import {
+	CACHE_KEY,
 	LEGACY_COLOR_PREFIX,
 	LEGACY_RATING_PREFIX,
 	LEGACY_TAGS_PREFIX,
@@ -28,53 +29,86 @@ export function emptyState() {
 	};
 }
 
-// Factory over a { get(key), set(key, value) } backend. Loads the consolidated
-// state on first access; mutations are read-modify-write (re-read disk, apply
-// the mutation, write back) so writes from other tabs that landed since the
-// last read are absorbed instead of clobbered. The pre-RMW design was racy:
-// at page load every tab the user had cmd-clicked open from the front page
-// would call setReadComments synchronously with a stale in-memory snapshot,
-// and the last writer's snapshot wiped everyone else's entry. The cross-tab
-// listener can't fix that after the fact — it only invalidates the in-memory
-// cache, it doesn't merge in-flight writes.
+// The user-data slice (hn_state) and the cache slice (hn_cache). Splitting the
+// fields across two keys is what keeps a cache write from rewriting the blob
+// that carries ratings/tags — see CACHE_KEY in config.js.
+const USER_FIELDS = ["schemaVersion", "ratings", "tags", "colors"];
+const CACHE_FIELDS = ["cache", "itemCache", "readComments", "watchedComments"];
+
+function emptyUser() {
+	return {
+		schemaVersion: STATE_SCHEMA_VERSION,
+		ratings: {},
+		tags: {},
+		colors: {},
+	};
+}
+function emptyCache() {
+	return { cache: {}, itemCache: {}, readComments: {}, watchedComments: {} };
+}
+
+// Factory over a { get(key), set(key, value) } backend. The state lives across
+// two keys (user data + caches); load() reads both and merges them into one
+// in-memory snapshot so every getter keeps reading `load().<field>`. Mutations
+// are read-modify-write against a single key — re-read that key, apply, write it
+// back — so a write from another tab that landed since the last read is absorbed
+// rather than clobbered, and a user-data write never disturbs the cache slice
+// (or vice-versa). The pre-split design put both on one key, so the page-load
+// fetchUser storm (one setCachedUser write per resolve, across every open tab)
+// could land a stale blob that rolled a freshly-clicked rating back; separating
+// the keys makes that unrepresentable.
 export function createStore(backend) {
 	let state = null;
 
-	const parseState = (raw) => {
-		if (raw === undefined || raw === null || raw === "") {
-			return emptyState();
-		}
+	const safeParse = (raw) => {
+		if (raw === undefined || raw === null || raw === "") return null;
 		try {
-			const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-			return { ...emptyState(), ...parsed };
+			return typeof raw === "string" ? JSON.parse(raw) : raw;
 		} catch (_err) {
-			return emptyState();
+			return null;
 		}
 	};
 
-	const readDisk = () => parseState(backend.get(STATE_KEY));
+	// Pick a fixed field set out of a parsed blob onto a fresh defaults object.
+	// A slice never carries stray fields from the other key — notably the cache
+	// fields the additive migration leaves in hn_state until the next user-data
+	// write rewrites it clean.
+	const sliceFrom = (raw, fields, defaults) => {
+		const parsed = safeParse(raw);
+		if (parsed && typeof parsed === "object") {
+			for (const k of fields) {
+				if (k in parsed) defaults[k] = parsed[k];
+			}
+		}
+		return defaults;
+	};
+
+	const readUser = () =>
+		sliceFrom(backend.get(STATE_KEY), USER_FIELDS, emptyUser());
+	const readCache = () =>
+		sliceFrom(backend.get(CACHE_KEY), CACHE_FIELDS, emptyCache());
 
 	const load = () => {
 		if (state !== null) return state;
-		state = readDisk();
+		state = { ...readUser(), ...readCache() };
 		return state;
 	};
 
-	// Apply a mutation against the latest disk state. The mutator runs on
-	// a fresh read of the blob, then we write the whole thing back; this
-	// absorbs concurrent writes from other tabs as long as our get-then-set
-	// pair isn't preempted (GM_getValue and GM_setValue are synchronous in
-	// Tampermonkey/Violentmonkey, so the race window is essentially zero
-	// per call site). The mutator may return `false` to signal "no change,
-	// don't write" — used by pruneReadComments when nothing's stale.
-	const mutate = (mutator) => {
-		const fresh = readDisk();
+	// Read-modify-write against one key. `read` returns a fresh slice off disk;
+	// the mutator may return `false` to signal "no change, don't write" (used by
+	// the prune sweepers). We refresh only the slice we own in the in-memory
+	// snapshot, leaving the other slice intact. GM_getValue/GM_setValue are
+	// synchronous per tab, so the get-then-set window is essentially zero.
+	const mutateKey = (key, read, mutator) => {
+		const fresh = read();
 		const result = mutator(fresh);
 		if (result !== false) {
-			backend.set(STATE_KEY, JSON.stringify(fresh));
+			backend.set(key, JSON.stringify(fresh));
 		}
-		state = fresh;
+		state = { ...load(), ...fresh };
 	};
+	const mutateUser = (mutator) => mutateKey(STATE_KEY, readUser, mutator);
+	const mutateCache = (mutator) => mutateKey(CACHE_KEY, readCache, mutator);
 
 	const hydrateTag = (tagName) => {
 		const color = load().colors[tagName] || {
@@ -93,7 +127,7 @@ export function createStore(backend) {
 			return load().ratings[username] || 0;
 		},
 		setRating(username, rating) {
-			mutate((s) => {
+			mutateUser((s) => {
 				// A zero rating is the absence of a rating — store nothing
 				// rather than a 0 entry that would accumulate for every user
 				// the reader ever nudged and reset.
@@ -109,7 +143,7 @@ export function createStore(backend) {
 			return names.map(hydrateTag);
 		},
 		setUserTags(username, tags) {
-			mutate((s) => {
+			mutateUser((s) => {
 				// An empty tag list is the absence of tags — drop the key so
 				// users whose tags were all removed don't leave empty arrays
 				// behind. (Shared tag colours are intentionally left in place:
@@ -139,7 +173,7 @@ export function createStore(backend) {
 			return load().colors[tagName] || null;
 		},
 		setTagColor(tagName, { bgColor, textColor }) {
-			mutate((s) => {
+			mutateUser((s) => {
 				s.colors[tagName] = { bgColor, textColor };
 			});
 		},
@@ -156,7 +190,7 @@ export function createStore(backend) {
 			return rest;
 		},
 		setCachedUser(username, data, nowMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				s.cache[username] = { ...data, fetchedAt: nowMs };
 			});
 		},
@@ -172,7 +206,7 @@ export function createStore(backend) {
 			return digest;
 		},
 		setCachedItem(itemId, digest, nowMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				s.itemCache[itemId] = { ...digest, fetchedAt: nowMs };
 			});
 		},
@@ -181,7 +215,7 @@ export function createStore(backend) {
 		// a key fetched once stayed in storage forever and was re-parsed on
 		// every load. Run once per page load; one RMW write covers both maps.
 		pruneCaches(nowMs, userTtlMs, itemTtlMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				const oldCache = s.cache || {};
 				const oldItemCache = s.itemCache || {};
 				const newCache = pruneExpiredByFetchedAt(oldCache, nowMs, userTtlMs);
@@ -215,7 +249,7 @@ export function createStore(backend) {
 		// (We replace, since a comment that's no longer on the page must
 		// have been deleted/flagged, and there's no value in tracking it.)
 		setReadComments(itemId, ids, nowMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
 			});
 		},
@@ -223,7 +257,7 @@ export function createStore(backend) {
 		// item-page load so a user who reads-then-never-revisits doesn't
 		// accumulate dead entries forever.
 		pruneReadComments(nowMs, ttlMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				const before = s.readComments;
 				const after = pruneExpiredReadComments(before, nowMs, ttlMs);
 				if (Object.keys(after).length === Object.keys(before).length) {
@@ -246,7 +280,7 @@ export function createStore(backend) {
 			return map[commentId] || null;
 		},
 		setWatchedComment(commentId, entry) {
-			mutate((s) => {
+			mutateCache((s) => {
 				s.watchedComments[commentId] = {
 					itemId: entry.itemId,
 					seenKids: (entry.seenKids || []).slice(),
@@ -257,7 +291,7 @@ export function createStore(backend) {
 			});
 		},
 		removeWatchedComment(commentId) {
-			mutate((s) => {
+			mutateCache((s) => {
 				if (!s.watchedComments?.[commentId]) return false;
 				delete s.watchedComments[commentId];
 			});
@@ -266,7 +300,7 @@ export function createStore(backend) {
 		// most recent API check returned. Called when the user lands on
 		// the item page where a watched comment is rendered.
 		markWatchSeen(commentId, _nowMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				const e = s.watchedComments?.[commentId];
 				if (!e) return false;
 				e.seenKids = (e.latestKids || []).slice();
@@ -277,7 +311,7 @@ export function createStore(backend) {
 		// "what's new since I last looked" notion until the user visits
 		// the item page.
 		updateWatchKids(commentId, kids, nowMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				const e = s.watchedComments?.[commentId];
 				if (!e) return false;
 				e.latestKids = (kids || []).slice();
@@ -287,7 +321,7 @@ export function createStore(backend) {
 		// Drop expired entries from the watchedComments map. Run periodically
 		// so a watch that hasn't been checked in >14 days is cleaned up.
 		pruneWatchedComments(nowMs, ttlMs) {
-			mutate((s) => {
+			mutateCache((s) => {
 				const before = s.watchedComments || {};
 				const after = pruneExpiredWatches(before, nowMs, ttlMs);
 				if (Object.keys(after).length === Object.keys(before).length) {
@@ -297,9 +331,25 @@ export function createStore(backend) {
 			});
 		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
-			mutate((s) => {
+			mutateUser((s) => {
 				s.tags = tagsByUser;
 				s.colors = colorsByTag;
+			});
+		},
+		// Wholesale replace of every slice — the import path. User data lands
+		// in hn_state, caches/watches in hn_cache, one write each.
+		replaceAll(s) {
+			mutateUser((u) => {
+				u.schemaVersion = STATE_SCHEMA_VERSION;
+				u.ratings = s.ratings || {};
+				u.tags = s.tags || {};
+				u.colors = s.colors || {};
+			});
+			mutateCache((c) => {
+				c.cache = s.cache || {};
+				c.itemCache = s.itemCache || {};
+				c.readComments = s.readComments || {};
+				c.watchedComments = s.watchedComments || {};
 			});
 		},
 		// Expose raw state for export and for callers that need to iterate.
@@ -312,17 +362,19 @@ export function createStore(backend) {
 		_invalidate() {
 			state = null;
 		},
-		// Cross-tab handler. Given the old and new raw blobs that
-		// GM_addValueChangeListener reports for another tab's write, refresh
-		// the in-memory snapshot (so subsequent reads see the write without a
-		// backend round-trip) and return the set of users whose tag/rating UI
-		// must be re-rendered. An empty set means the write touched only
-		// caches, so the listener can skip the re-render entirely.
+		// Cross-tab handler for the hn_state key. Given the old and new raw
+		// blobs that GM_addValueChangeListener reports for another tab's write,
+		// refresh the user slice of the in-memory snapshot (so subsequent reads
+		// see the write without a backend round-trip) and return the set of
+		// users whose tag/rating UI must be re-rendered. The cache slice is
+		// preserved untouched — the listener only fires for hn_state, which no
+		// longer carries caches, so a cache write can never reach here to roll
+		// a local rating back.
 		_applyRemoteChange(oldRaw, newRaw) {
-			const oldState = parseState(oldRaw);
-			const newState = parseState(newRaw);
-			state = newState;
-			return affectedUsersByStateChange(oldState, newState);
+			const oldUser = sliceFrom(oldRaw, USER_FIELDS, emptyUser());
+			const newUser = sliceFrom(newRaw, USER_FIELDS, emptyUser());
+			state = { ...load(), ...newUser };
+			return affectedUsersByStateChange(oldUser, newUser);
 		},
 	};
 }
@@ -399,6 +451,38 @@ export function migrateLegacyKeys(backend) {
 	}
 
 	backend.set(STATE_KEY, JSON.stringify(state));
+}
+
+// Migrate the pre-split single-key layout (everything under hn_state) to the
+// two-key split: copy the cache slices into the new hn_cache key, leaving
+// hn_state in place. Additive on purpose — the next user-data write (setRating
+// etc.) rewrites hn_state from its user-only slice, dropping the now-duplicated
+// cache fields, and a re-run with hn_cache already present is a no-op. Not
+// trimming hn_state here is what makes the migration safe to race across the
+// several tabs a user cmd-clicks open at once: hn_state stays monolithic until
+// a human edits a rating/tag, so every concurrent run copies the same populated
+// cache slice — none can clobber a written hn_cache with an empty one. Runs
+// after migrateLegacyKeys (which may have just created the monolithic blob).
+export function migrateCacheKeySplit(backend) {
+	if (backend.get(CACHE_KEY) !== undefined) return;
+	const raw = backend.get(STATE_KEY);
+	if (raw === undefined) return;
+	let parsed;
+	try {
+		parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+	} catch (_err) {
+		return;
+	}
+	if (!parsed || typeof parsed !== "object") return;
+	backend.set(
+		CACHE_KEY,
+		JSON.stringify({
+			cache: parsed.cache || {},
+			itemCache: parsed.itemCache || {},
+			readComments: parsed.readComments || {},
+			watchedComments: parsed.watchedComments || {},
+		}),
+	);
 }
 
 // Accepts either the normalized export shape ({customTags, users}) or the

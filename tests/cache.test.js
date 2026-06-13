@@ -63,7 +63,7 @@ test("pruneCaches: drops stale user and item entries, keeps fresh", () => {
 
 	store.pruneCaches(t0, HOUR_MS, HOUR_MS);
 
-	const blob = JSON.parse(backend.data.hn_state);
+	const blob = JSON.parse(backend.data.hn_cache);
 	assert.deepEqual(Object.keys(blob.cache), ["fresh"]);
 	assert.deepEqual(Object.keys(blob.itemCache), ["100"]);
 });
@@ -73,11 +73,11 @@ test("pruneCaches: no write when nothing is stale", () => {
 	const store = createStore(backend);
 	const t0 = 1_000_000_000_000;
 	store.setCachedUser("alice", { created: 1, karma: 2 }, t0);
-	const before = backend.data.hn_state;
+	const before = backend.data.hn_cache;
 	store.pruneCaches(t0, HOUR_MS, HOUR_MS);
-	// mutate() skips the backend.set when the mutator returns false, so the
-	// stored blob reference is untouched.
-	assert.equal(backend.data.hn_state, before);
+	// mutateCache() skips the backend.set when the mutator returns false, so
+	// the stored blob reference is untouched.
+	assert.equal(backend.data.hn_cache, before);
 });
 
 test("setRating: a zero rating removes the entry rather than storing 0", () => {

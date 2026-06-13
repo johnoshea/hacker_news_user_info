@@ -126,15 +126,28 @@ test("store: _applyRemoteChange returns an empty set for a cache-only write", ()
 	assert.equal(affected.size, 0);
 });
 
-test("store: everything lives under a single backend key", () => {
+// User data and the background caches live under separate keys so a cache
+// write (the page-load fetch storm) can never rewrite the blob carrying
+// ratings/tags and roll a freshly-clicked rating back in another tab.
+test("store: user-data edits and cache writes use separate keys", () => {
 	const backend = makeFakeBackend();
 	const store = createStore(backend);
 	store.setRating("alice", 1);
 	store.setUserTags("alice", [
 		{ value: "t", bgColor: "hsl(1,50%,80%)", textColor: "black" },
 	]);
-	const keys = Object.keys(backend.data);
-	assert.equal(keys.length, 1, `expected 1 key, got: ${keys.join(",")}`);
+	// User-data edits write only hn_state.
+	assert.deepEqual(Object.keys(backend.data), ["hn_state"]);
+
+	// A cache write lands in hn_cache and leaves hn_state byte-for-byte intact.
+	const userBlob = backend.data.hn_state;
+	store.setCachedUser("alice", { created: 1, karma: 2 }, 1000);
+	assert.deepEqual(Object.keys(backend.data).sort(), ["hn_cache", "hn_state"]);
+	assert.equal(
+		backend.data.hn_state,
+		userBlob,
+		"a cache write must not touch hn_state",
+	);
 });
 
 // Two stores backed by the same backend simulate two browser tabs
@@ -160,7 +173,7 @@ test("store: concurrent setReadComments from two stores both persist", () => {
 	// re-reads disk before mutating, so Tab A's entry is preserved.
 	tabB.setReadComments("48000002", ["b1"], 2000);
 
-	const persisted = JSON.parse(backend.data.hn_state);
+	const persisted = JSON.parse(backend.data.hn_cache);
 	assert.deepEqual(persisted.readComments, {
 		48000001: { ids: ["a1", "a2"], fetchedAt: 1000 },
 		48000002: { ids: ["b1"], fetchedAt: 2000 },
@@ -204,5 +217,6 @@ test("store: replaceTagsAndColors writes once, leaves ratings/cache alone", () =
 		y: { bgColor: "yc", textColor: "black" },
 	});
 	assert.equal(persisted.ratings.alice, 5);
-	assert.equal(persisted.cache.alice.created, 1);
+	// The user cache lives in the separate hn_cache key, untouched.
+	assert.equal(JSON.parse(backend.data.hn_cache).cache.alice.created, 1);
 });
