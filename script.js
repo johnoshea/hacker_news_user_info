@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+c0ae408
+// @version      0.11+cc76bdd
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -240,6 +240,17 @@ function pruneExpiredByFetchedAt(map, nowMs, ttlMs) {
 	return out;
 }
 
+// Read the comment count out of HN's "N comments" link text. HN renders
+// "73&nbsp;comments" (textContent yields a non-breaking space) and
+// "1,234 comments" for large threads; a thread with no comments renders
+// "discuss" (no digits). Story-watch reads this off both the listing row
+// and the item-page fatitem to decide whether new comments have arrived.
+// Anything with no digit run counts as 0.
+function parseCommentCount(text) {
+	const match = String(text ?? "").match(/\d[\d,]*/);
+	return match ? Number.parseInt(match[0].replace(/,/g, ""), 10) : 0;
+}
+
 // Truncate a string to at most maxLen characters, appending an ellipsis
 // (…) when the original was longer. Used by the hover popups to keep
 // long item-text or user-about previews from overflowing the popup.
@@ -469,6 +480,7 @@ function emptyState() {
 		readComments: {}, // itemId -> { ids: [...], fetchedAt }
 		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, kids, fetchedAt }
 		watchedComments: {}, // commentId -> { itemId, seenKids, latestKids, lastCheckedAt, addedAt }
+		watchedStories: {}, // itemId -> { seenCount, fetchedAt }
 	};
 }
 
@@ -476,7 +488,13 @@ function emptyState() {
 // fields across two keys is what keeps a cache write from rewriting the blob
 // that carries ratings/tags — see CACHE_KEY in config.js.
 const USER_FIELDS = ["schemaVersion", "ratings", "tags", "colors"];
-const CACHE_FIELDS = ["cache", "itemCache", "readComments", "watchedComments"];
+const CACHE_FIELDS = [
+	"cache",
+	"itemCache",
+	"readComments",
+	"watchedComments",
+	"watchedStories",
+];
 
 function emptyUser() {
 	return {
@@ -487,7 +505,13 @@ function emptyUser() {
 	};
 }
 function emptyCache() {
-	return { cache: {}, itemCache: {}, readComments: {}, watchedComments: {} };
+	return {
+		cache: {},
+		itemCache: {},
+		readComments: {},
+		watchedComments: {},
+		watchedStories: {},
+	};
 }
 
 // Factory over a { get(key), set(key, value) } backend. The state lives across
@@ -773,6 +797,44 @@ function createStore(backend) {
 				s.watchedComments = after;
 			});
 		},
+		// Story-level watches for the whole-thread new-comment flag. Keyed
+		// by item id; each entry stores `seenCount` — the total comment
+		// count the last time the user opened the thread — and `fetchedAt`,
+		// the timestamp of that visit (drives the TTL prune). No API state:
+		// the listing pass reads the current count straight off the row, so
+		// there's nothing to recheck in the background.
+		getWatchedStories() {
+			return load().watchedStories || {};
+		},
+		getWatchedStory(itemId) {
+			const map = load().watchedStories || {};
+			return map[itemId] || null;
+		},
+		setStoryWatch(itemId, seenCount, nowMs) {
+			mutateCache((s) => {
+				if (!s.watchedStories) s.watchedStories = {};
+				s.watchedStories[itemId] = { seenCount, fetchedAt: nowMs };
+			});
+		},
+		removeStoryWatch(itemId) {
+			mutateCache((s) => {
+				if (!s.watchedStories?.[itemId]) return false;
+				delete s.watchedStories[itemId];
+			});
+		},
+		// Drop story watches not visited within the TTL. Keyed on fetchedAt
+		// (last visit), so a thread you keep opening stays watched and a
+		// cold one is swept. Reuses the fetchedAt-based sweeper.
+		pruneWatchedStories(nowMs, ttlMs) {
+			mutateCache((s) => {
+				const before = s.watchedStories || {};
+				const after = pruneExpiredByFetchedAt(before, nowMs, ttlMs);
+				if (Object.keys(after).length === Object.keys(before).length) {
+					return false;
+				}
+				s.watchedStories = after;
+			});
+		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
 			mutateUser((s) => {
 				s.tags = tagsByUser;
@@ -793,6 +855,7 @@ function createStore(backend) {
 				c.itemCache = s.itemCache || {};
 				c.readComments = s.readComments || {};
 				c.watchedComments = s.watchedComments || {};
+				c.watchedStories = s.watchedStories || {};
 			});
 		},
 		// Expose raw state for export and for callers that need to iterate.
@@ -924,6 +987,7 @@ function migrateCacheKeySplit(backend) {
 			itemCache: parsed.itemCache || {},
 			readComments: parsed.readComments || {},
 			watchedComments: parsed.watchedComments || {},
+			watchedStories: parsed.watchedStories || {},
 		}),
 	);
 }
@@ -937,7 +1001,7 @@ function parseImport(data) {
 	if (!data || typeof data !== "object") return state;
 
 	// Normalized format.
-	if (data.customTags || data.users || data.watches) {
+	if (data.customTags || data.users || data.watches || data.storyWatches) {
 		if (data.customTags && typeof data.customTags === "object") {
 			for (const [tagName, info] of Object.entries(data.customTags)) {
 				if (info?.bgColor) {
@@ -971,6 +1035,15 @@ function parseImport(data) {
 					lastCheckedAt:
 						typeof entry.lastCheckedAt === "number" ? entry.lastCheckedAt : 0,
 					addedAt: typeof entry.addedAt === "number" ? entry.addedAt : 0,
+				};
+			}
+		}
+		if (data.storyWatches && typeof data.storyWatches === "object") {
+			for (const [itemId, entry] of Object.entries(data.storyWatches)) {
+				if (!entry || typeof entry.seenCount !== "number") continue;
+				state.watchedStories[itemId] = {
+					seenCount: entry.seenCount,
+					fetchedAt: typeof entry.fetchedAt === "number" ? entry.fetchedAt : 0,
 				};
 			}
 		}
@@ -1059,7 +1132,15 @@ function stateToExport(state) {
 			addedAt: entry.addedAt,
 		};
 	}
-	return { customTags, users, watches };
+	const storyWatches = {};
+	for (const [itemId, entry] of Object.entries(state.watchedStories || {})) {
+		if (!entry || typeof entry.seenCount !== "number") continue;
+		storyWatches[itemId] = {
+			seenCount: entry.seenCount,
+			fetchedAt: entry.fetchedAt,
+		};
+	}
+	return { customTags, users, watches, storyWatches };
 }
 
 // Returns a new state with every user's `oldName` tag replaced by `newName`
@@ -1260,6 +1341,21 @@ function getStoryListTable() {
 	const table = row.closest("table");
 	if (!table || table.classList.contains("fatitem")) return null;
 	return table;
+}
+
+// Given a story's `tr.athing.submission` row (on a listing) or the item
+// page's fatitem header row, return its "n comments" link. HN puts the
+// subtext (score, by-user, age, hide, comments) on the next sibling row;
+// the comments link is the last `item?id=` anchor there (ahead of it sit
+// the age link and, on listings, nothing else that matches). Returns null
+// if the row has no subtext or no such link (e.g. a jobs post). Shared by
+// the watched-comment and watched-story listing passes plus the
+// story-watch toggle, so it lives here rather than in any one feature.
+function findCommentsLink(athingRow) {
+	const subtext = athingRow?.nextElementSibling;
+	if (!subtext) return null;
+	const links = subtext.querySelectorAll('a[href^="item?id="]');
+	return links[links.length - 1] || null;
 }
 
 
@@ -1869,6 +1965,14 @@ const STYLES = `
     }
     .hn-watched-link::before {
       content: "★ ";
+    }
+
+    /* "(+N)" delta appended after a watched story's comments link when new
+       comments have arrived since the user last opened the thread. A
+       sibling of the anchor (not inside it), so it needs its own colour. */
+    .hn-new-count {
+      font-weight: bold;
+      color: var(--colour-hn-orange);
     }
 
     /* Auto-collapse: when an author's stored rating is <= the
@@ -3216,6 +3320,86 @@ function setupReplyInline() {
 }
 
 
+// ===== src/features/story-watch-toggle.js =====
+
+// Whole-story "watch for new comments" toggle. Item pages only. Adds an
+// eye to the fatitem subtext; the listing pass (watched-story-highlights)
+// then flags the story's "n comments" link when the total comment count
+// grows past what the user last saw here. Unlike the per-comment watch,
+// there is no background API recheck — the listing row already renders the
+// live count, so the two surfaces just compare integers.
+//
+// Click semantics mirror the per-comment eye:
+//   off -> on : persist a watch keyed by item id, seeded with the count
+//               currently shown in the fatitem (everything visible now is
+//               "seen").
+//   on  -> off: delete the watch entry.
+//
+// Page-load semantics: if the story is already watched, refresh seenCount
+// to the current count and stamp the visit — the story analogue of
+// markWatchSeen, i.e. the "visiting the thread clears the flag" step.
+
+
+
+
+// Distinct top-level names from watch-toggles.js: the build fuses every
+// module into one IIFE scope, so a second `const ICON_OFF` / `function
+// setIconState` would be a redeclaration in the bundle.
+const STORY_EYE_OFF = "👁";
+const STORY_EYE_ON = "👁‍🗨";
+
+function setStoryEyeState(iconEl, isOn) {
+	iconEl.textContent = isOn ? STORY_EYE_ON : STORY_EYE_OFF;
+	iconEl.title = isOn
+		? "Stop watching this story"
+		: "Watch this story for new comments";
+	iconEl.classList.toggle("hn-watching", isOn);
+}
+function setupStoryWatchToggle({ store }) {
+	if (!isItemPage()) return;
+	const itemId = getItemPageId();
+	if (!itemId) return;
+
+	// Sweep story watches not visited within the TTL — same cadence and
+	// rationale as the per-comment watch prune.
+	store.pruneWatchedStories(Date.now(), WATCH_TTL_MS);
+
+	const athing = document.querySelector("table.fatitem tr.athing.submission");
+	if (!athing) return;
+	const link = findCommentsLink(athing);
+	if (!link) return;
+
+	const currentCount = parseCommentCount(link.textContent);
+	const initiallyWatched = store.getWatchedStory(itemId) !== null;
+
+	// Visiting a watched story acknowledges its current count: refresh
+	// seenCount (clears the listing flag) and stamp the visit (refreshes
+	// the TTL).
+	if (initiallyWatched) {
+		store.setStoryWatch(itemId, currentCount, Date.now());
+	}
+
+	const icon = h("span", { class: "hn-watch-icon" });
+	setStoryEyeState(icon, initiallyWatched);
+
+	icon.addEventListener("click", () => {
+		if (icon.classList.contains("hn-watching")) {
+			store.removeStoryWatch(itemId);
+			setStoryEyeState(icon, false);
+		} else {
+			store.setStoryWatch(itemId, currentCount, Date.now());
+			setStoryEyeState(icon, true);
+		}
+	});
+
+	// Append to the subline (the "| hide | past | favorite | n comments"
+	// span) so the eye reads as one more subtext action.
+	const subline = link.parentElement;
+	subline.appendChild(document.createTextNode(" | "));
+	subline.appendChild(icon);
+}
+
+
 // ===== src/features/user-render.js =====
 
 // Per-user inline UI on item pages: account info blurb, rating controls,
@@ -3874,20 +4058,6 @@ function setupWatchedCommentNav({ store, toolbar }) {
 // Runs unconditionally; gates internally on getStoryListTable()
 // (matches setupSortStories' approach so the call site in main.js
 // stays simple).
-
-
-
-
-// Find the "n comments" link for a story row. HN renders each story
-// as <tr class="athing"> followed by a subtext <tr> on the next
-// sibling; the comments link is the last <a href="item?id=..."> in
-// the subtext (ahead of it sits "by user", "n hours ago", "hide", "past").
-function findCommentsLink(athingRow) {
-	const subtext = athingRow.nextElementSibling;
-	if (!subtext) return null;
-	const links = subtext.querySelectorAll('a[href^="item?id="]');
-	return links[links.length - 1] || null;
-}
 function setupWatchedListingHighlights({ store, fetchItem }) {
 	const table = getStoryListTable();
 	if (!table) return;
@@ -3938,6 +4108,43 @@ function setupWatchedListingHighlights({ store, fetchItem }) {
 				}
 			});
 		}
+	}
+}
+
+
+// ===== src/features/watched-story-highlights.js =====
+
+// Listing-page pass for whole-story watches. For each story row that the
+// user is watching, compare the count HN renders now against the seenCount
+// captured on the last item-page visit; when it has grown, restyle the
+// "n comments" link (★ + bold orange, via the shared .hn-watched-link
+// rule) and append a "(+N)" delta so the amount of new activity is visible
+// at a glance. No API: the listing already shows the live count.
+//
+// Runs unconditionally; gates internally on getStoryListTable() (mirrors
+// setupWatchedListingHighlights so the main.js call site stays simple). It
+// composes with that per-comment pass — both just add the same idempotent
+// class to the same link, and only this pass appends the count.
+function setupWatchedStoryHighlights({ store }) {
+	const table = getStoryListTable();
+	if (!table) return;
+
+	// A listing-only browser never hits the item-page prune, so sweep here
+	// too — same reasoning as the watched-comment listing pass.
+	store.pruneWatchedStories(Date.now(), WATCH_TTL_MS);
+
+	const watched = store.getWatchedStories();
+	if (Object.keys(watched).length === 0) return;
+
+	for (const athing of table.querySelectorAll("tr.athing")) {
+		const entry = watched[athing.id];
+		if (!entry) continue;
+		const link = findCommentsLink(athing);
+		if (!link) continue;
+		const delta = parseCommentCount(link.textContent) - entry.seenCount;
+		if (delta <= 0) continue;
+		link.classList.add("hn-watched-link");
+		link.after(h("span", { class: "hn-new-count", text: ` (+${delta})` }));
 	}
 }
 
@@ -4478,6 +4685,8 @@ function createToolbar({ store }) {
 
 
 
+
+
 GM_addStyle(STYLES);
 
 // Adapter from GM_* to the {get, set, list} interface the store and
@@ -4540,9 +4749,11 @@ transformQuotes();
 setupLinkifyUserAbout();
 setupSortStories();
 setupWatchedListingHighlights({ store, fetchItem });
+setupWatchedStoryHighlights({ store });
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
+	setupStoryWatchToggle({ store });
 	setupClickIndentToggle();
 	setupCollapseRootComment();
 	transformBackticksToMonospace();

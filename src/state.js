@@ -26,6 +26,7 @@ export function emptyState() {
 		readComments: {}, // itemId -> { ids: [...], fetchedAt }
 		itemCache: {}, // itemId -> { title, url, by, score, descendants, time, text, type, kids, fetchedAt }
 		watchedComments: {}, // commentId -> { itemId, seenKids, latestKids, lastCheckedAt, addedAt }
+		watchedStories: {}, // itemId -> { seenCount, fetchedAt }
 	};
 }
 
@@ -33,7 +34,13 @@ export function emptyState() {
 // fields across two keys is what keeps a cache write from rewriting the blob
 // that carries ratings/tags — see CACHE_KEY in config.js.
 const USER_FIELDS = ["schemaVersion", "ratings", "tags", "colors"];
-const CACHE_FIELDS = ["cache", "itemCache", "readComments", "watchedComments"];
+const CACHE_FIELDS = [
+	"cache",
+	"itemCache",
+	"readComments",
+	"watchedComments",
+	"watchedStories",
+];
 
 function emptyUser() {
 	return {
@@ -44,7 +51,13 @@ function emptyUser() {
 	};
 }
 function emptyCache() {
-	return { cache: {}, itemCache: {}, readComments: {}, watchedComments: {} };
+	return {
+		cache: {},
+		itemCache: {},
+		readComments: {},
+		watchedComments: {},
+		watchedStories: {},
+	};
 }
 
 // Factory over a { get(key), set(key, value) } backend. The state lives across
@@ -330,6 +343,44 @@ export function createStore(backend) {
 				s.watchedComments = after;
 			});
 		},
+		// Story-level watches for the whole-thread new-comment flag. Keyed
+		// by item id; each entry stores `seenCount` — the total comment
+		// count the last time the user opened the thread — and `fetchedAt`,
+		// the timestamp of that visit (drives the TTL prune). No API state:
+		// the listing pass reads the current count straight off the row, so
+		// there's nothing to recheck in the background.
+		getWatchedStories() {
+			return load().watchedStories || {};
+		},
+		getWatchedStory(itemId) {
+			const map = load().watchedStories || {};
+			return map[itemId] || null;
+		},
+		setStoryWatch(itemId, seenCount, nowMs) {
+			mutateCache((s) => {
+				if (!s.watchedStories) s.watchedStories = {};
+				s.watchedStories[itemId] = { seenCount, fetchedAt: nowMs };
+			});
+		},
+		removeStoryWatch(itemId) {
+			mutateCache((s) => {
+				if (!s.watchedStories?.[itemId]) return false;
+				delete s.watchedStories[itemId];
+			});
+		},
+		// Drop story watches not visited within the TTL. Keyed on fetchedAt
+		// (last visit), so a thread you keep opening stays watched and a
+		// cold one is swept. Reuses the fetchedAt-based sweeper.
+		pruneWatchedStories(nowMs, ttlMs) {
+			mutateCache((s) => {
+				const before = s.watchedStories || {};
+				const after = pruneExpiredByFetchedAt(before, nowMs, ttlMs);
+				if (Object.keys(after).length === Object.keys(before).length) {
+					return false;
+				}
+				s.watchedStories = after;
+			});
+		},
 		replaceTagsAndColors(tagsByUser, colorsByTag) {
 			mutateUser((s) => {
 				s.tags = tagsByUser;
@@ -350,6 +401,7 @@ export function createStore(backend) {
 				c.itemCache = s.itemCache || {};
 				c.readComments = s.readComments || {};
 				c.watchedComments = s.watchedComments || {};
+				c.watchedStories = s.watchedStories || {};
 			});
 		},
 		// Expose raw state for export and for callers that need to iterate.
@@ -481,6 +533,7 @@ export function migrateCacheKeySplit(backend) {
 			itemCache: parsed.itemCache || {},
 			readComments: parsed.readComments || {},
 			watchedComments: parsed.watchedComments || {},
+			watchedStories: parsed.watchedStories || {},
 		}),
 	);
 }
@@ -494,7 +547,7 @@ export function parseImport(data) {
 	if (!data || typeof data !== "object") return state;
 
 	// Normalized format.
-	if (data.customTags || data.users || data.watches) {
+	if (data.customTags || data.users || data.watches || data.storyWatches) {
 		if (data.customTags && typeof data.customTags === "object") {
 			for (const [tagName, info] of Object.entries(data.customTags)) {
 				if (info?.bgColor) {
@@ -528,6 +581,15 @@ export function parseImport(data) {
 					lastCheckedAt:
 						typeof entry.lastCheckedAt === "number" ? entry.lastCheckedAt : 0,
 					addedAt: typeof entry.addedAt === "number" ? entry.addedAt : 0,
+				};
+			}
+		}
+		if (data.storyWatches && typeof data.storyWatches === "object") {
+			for (const [itemId, entry] of Object.entries(data.storyWatches)) {
+				if (!entry || typeof entry.seenCount !== "number") continue;
+				state.watchedStories[itemId] = {
+					seenCount: entry.seenCount,
+					fetchedAt: typeof entry.fetchedAt === "number" ? entry.fetchedAt : 0,
 				};
 			}
 		}
@@ -616,7 +678,15 @@ export function stateToExport(state) {
 			addedAt: entry.addedAt,
 		};
 	}
-	return { customTags, users, watches };
+	const storyWatches = {};
+	for (const [itemId, entry] of Object.entries(state.watchedStories || {})) {
+		if (!entry || typeof entry.seenCount !== "number") continue;
+		storyWatches[itemId] = {
+			seenCount: entry.seenCount,
+			fetchedAt: entry.fetchedAt,
+		};
+	}
+	return { customTags, users, watches, storyWatches };
 }
 
 // Returns a new state with every user's `oldName` tag replaced by `newName`

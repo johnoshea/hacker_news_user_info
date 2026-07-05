@@ -55,6 +55,7 @@ test("cleanOrphans is a no-op when every tag has a user", () => {
 			alice: { rating: 1, tags: ["foo"] },
 		},
 		watches: {},
+		storyWatches: {},
 	});
 	assert.deepEqual(removed, []);
 });

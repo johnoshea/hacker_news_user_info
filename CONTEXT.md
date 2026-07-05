@@ -60,8 +60,9 @@ shape; if HN renames these, the corresponding feature breaks.
 - **`hn_state` / `hn_cache`** — the two `GM` storage values holding persisted
   state. **`hn_state`** holds curated user data (ratings, tags, tag colours),
   written only on explicit edits. **`hn_cache`** holds the regenerable
-  background caches (user/item digests, read-comment lists, watched comments),
-  rewritten constantly by the page-load fetch storm. Splitting them keeps that
+  background caches (user/item digests, read-comment lists, watched comments,
+  watched stories), rewritten constantly by the page-load fetch storm.
+  Splitting them keeps that
   storm off the key carrying ratings, so a cache write can't clobber a rating.
   Maps in each are keyed by username, item id, or comment id.
 - **store / backend** — `store` (from `createStore`) is the typed accessor that
@@ -87,6 +88,16 @@ shape; if HN renames these, the corresponding feature breaks.
   `latestKids` is the comment's current direct replies (refreshed on recheck);
   `seenKids` is the snapshot from your last item-page visit; **`hasNew`** is the
   derived predicate `latestKids.some(id => !seenKids.includes(id))`.
+- **story watch / watched story** — a per-*story* new-comment tracker under
+  `watchedStories[itemId]`, distinct from a watched comment: it flags the whole
+  thread, not one subtree. Explicit opt-in via the 👁 in the fatitem subtext.
+- **seenCount** — for a watched story, the total comment count the last time you
+  opened the thread. The listing pass flags the story (`★` + bold, plus a
+  `(+N)` delta) when HN's current count exceeds it, and an item-page visit
+  refreshes `seenCount` to the current count (the "visiting clears the flag"
+  step — the story analogue of `markWatchSeen`). No API: both the item-page
+  fatitem and the listing row render the count in the DOM, parsed by
+  `parseCommentCount`.
 - **rating** — your per-user up/down integer opinion of an author. Defaults to
   0; `setRating(user, 0)` deletes the entry rather than storing a neutral 0.
 - **tag** — a per-user label. Tag *colours* are shared across all users

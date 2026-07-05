@@ -604,6 +604,14 @@ export const STYLES = `
       content: "★ ";
     }
 
+    /* "(+N)" delta appended after a watched story's comments link when new
+       comments have arrived since the user last opened the thread. A
+       sibling of the anchor (not inside it), so it needs its own colour. */
+    .hn-new-count {
+      font-weight: bold;
+      color: var(--colour-hn-orange);
+    }
+
     /* Auto-collapse: when an author's stored rating is <= the
        LOW_SCORE_COLLAPSE_THRESHOLD, the row is tagged .hn-low-score and
        the body + reply link are hidden. The comhead and the

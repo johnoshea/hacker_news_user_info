@@ -9,19 +9,8 @@
 // stays simple).
 
 import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
-import { getStoryListTable } from "../dom.js";
+import { findCommentsLink, getStoryListTable } from "../dom.js";
 import { isWatchCheckStale, watchesByItemId } from "../parsing.js";
-
-// Find the "n comments" link for a story row. HN renders each story
-// as <tr class="athing"> followed by a subtext <tr> on the next
-// sibling; the comments link is the last <a href="item?id=..."> in
-// the subtext (ahead of it sits "by user", "n hours ago", "hide", "past").
-function findCommentsLink(athingRow) {
-	const subtext = athingRow.nextElementSibling;
-	if (!subtext) return null;
-	const links = subtext.querySelectorAll('a[href^="item?id="]');
-	return links[links.length - 1] || null;
-}
 
 export function setupWatchedListingHighlights({ store, fetchItem }) {
 	const table = getStoryListTable();

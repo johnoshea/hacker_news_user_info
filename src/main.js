@@ -18,6 +18,7 @@ import { setupLinkifyUserAbout } from "./features/linkify-user-about.js";
 import { setupParentHover } from "./features/parent-hover.js";
 import { setupReplyInline } from "./features/reply-inline.js";
 import { setupSortStories } from "./features/sort-stories.js";
+import { setupStoryWatchToggle } from "./features/story-watch-toggle.js";
 import { createTagManager } from "./features/tag-manager.js";
 import { setupToggleAllComments } from "./features/toggle-all-comments.js";
 import { createToolbar } from "./features/toolbar.js";
@@ -26,6 +27,7 @@ import { createUserRender } from "./features/user-render.js";
 import { setupWatchToggles } from "./features/watch-toggles.js";
 import { setupWatchedCommentNav } from "./features/watched-comment-nav.js";
 import { setupWatchedListingHighlights } from "./features/watched-listing-highlights.js";
+import { setupWatchedStoryHighlights } from "./features/watched-story-highlights.js";
 import {
 	createStore,
 	migrateCacheKeySplit,
@@ -95,9 +97,11 @@ transformQuotes();
 setupLinkifyUserAbout();
 setupSortStories();
 setupWatchedListingHighlights({ store, fetchItem });
+setupWatchedStoryHighlights({ store });
 
 if (isItemPage()) {
 	setupCommentBoxToggle();
+	setupStoryWatchToggle({ store });
 	setupClickIndentToggle();
 	setupCollapseRootComment();
 	transformBackticksToMonospace();

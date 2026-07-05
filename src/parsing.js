@@ -134,6 +134,17 @@ export function pruneExpiredByFetchedAt(map, nowMs, ttlMs) {
 	return out;
 }
 
+// Read the comment count out of HN's "N comments" link text. HN renders
+// "73&nbsp;comments" (textContent yields a non-breaking space) and
+// "1,234 comments" for large threads; a thread with no comments renders
+// "discuss" (no digits). Story-watch reads this off both the listing row
+// and the item-page fatitem to decide whether new comments have arrived.
+// Anything with no digit run counts as 0.
+export function parseCommentCount(text) {
+	const match = String(text ?? "").match(/\d[\d,]*/);
+	return match ? Number.parseInt(match[0].replace(/,/g, ""), 10) : 0;
+}
+
 // Truncate a string to at most maxLen characters, appending an ellipsis
 // (…) when the original was longer. Used by the hover popups to keep
 // long item-text or user-about previews from overflowing the popup.

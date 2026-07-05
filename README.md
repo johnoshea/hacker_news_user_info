@@ -27,6 +27,7 @@ Each commenter's username is augmented with:
 - **A tag list** in the right column showing all tags you've applied to the commenter, each with inline edit and remove icons.
 - **Original-poster highlight**: every comment by the item's submitter gets a `[op]` suffix and HN-orange username so you can spot the OP's replies at a glance.
 - **Watch for replies**: toggle the 👁 icon on any comment to start watching it. On the next visit to a listing page (`/news`, `/newest`, etc.), the story's "n comments" link is bold orange with a `★` prefix when new direct replies have arrived since you started watching. On the comment page itself, watched comments are marked with an orange left border and faint yellow tint, and the toolbar grows `↑ watch` / `watch ↓` buttons that jump between watched comments on the page. Watches persist until you toggle them off, with a 14-day TTL backstop on cold threads.
+- **Watch a whole story**: toggle the 👁 icon in the story header (next to "n comments") to watch the entire thread for *any* new comments, not just replies to one subtree. On listing pages the story's "n comments" link goes bold orange with a `★` prefix and a `(+N)` count of how many comments have arrived since you last opened it; visiting the thread clears the flag. No extra network requests — the count is read straight off the page. Same 14-day cold-thread TTL.
 
 The comment tree itself gets a few tweaks for skim-ability:
 
@@ -68,11 +69,13 @@ A small draggable toolbar in the top-right corner has **Save state** and **Resto
 
 **Watching for replies.** Click the 👁 icon next to any commenter's username (between the rating ▲▼ and the tag input) to flag the comment as one you'd like to know about future replies to. The icon switches to 👁‍🗨 and the comment row is highlighted. The next time you load `/news` (or any listing page) where that thread appears, the "n comments" link is highlighted with a `★` prefix if new direct replies have arrived. Click the comment page to acknowledge them; the highlight clears until more replies arrive.
 
+**Watching a whole story.** Click the 👁 icon in the story header (in the subtext line, next to "n comments") to watch the entire thread rather than one comment. On any listing page showing that story, the "n comments" link goes bold orange with a `★` prefix and a `(+N)` count of comments added since you last opened it — a quick way to spot which threads have activity worth revisiting. Opening the thread refreshes what you've seen and clears the flag. Detection is a plain count comparison read from the page (no API calls), so if comments are *deleted* between visits a few new ones can be masked; the in-thread new-comment tint still shows them once you open the thread.
+
 **Managing all tags.** Click the ☰ icon on any tag to open the tag manager overlay on the right-hand side of the page. It lists every tag you have ever created, sortable by name or by usage count and filterable by substring — the filter box is focused as soon as the overlay opens, so you can start typing immediately. From there you can rename a tag (press Enter to commit; renaming to a name that already exists prompts to merge), mark a tag for removal, or undo pending changes on a row. Click **Save** to apply everything at once, or **Cancel** / press **Escape** / click outside the overlay to discard your changes.
 
 **Cross-tab sync.** Rating and tag changes made in one tab are automatically reflected in other open HN tabs.
 
-**Backing up your data.** Click **Save state** in the top-right toolbar. A JSON file downloads containing all your ratings, tags, tag colors, and watched comments.
+**Backing up your data.** Click **Save state** in the top-right toolbar. A JSON file downloads containing all your ratings, tags, tag colors, watched comments, and watched stories.
 
 **Restoring your data.** Click **Restore state** and pick a previously-exported JSON file. Your current data is replaced and the page reloads.
 
@@ -97,14 +100,19 @@ See [CLAUDE.md](./CLAUDE.md) for architecture notes. Source lives under `src/` (
 Common tasks:
 
 ```sh
-just test   # run the Node test suite (pure logic only)
-just lint   # biome lint + autofix
-just fmt    # biome format
-just build  # rebuild script.js from src/
-just check  # lint + format + test + build (the pre-commit gate)
+just test           # run the Node test suite (pure logic only)
+just lint           # biome lint + autofix (warnings are errors)
+just fmt            # biome format
+just build          # rebuild script.js from src/
+just check          # lint + format + test + build (the pre-commit gate)
+just install-hooks  # install the prek git pre-commit hooks (once per clone)
 ```
 
 Always run `just build` (or `just check`) after editing `src/` so the built `script.js` stays in sync — CI fails the PR otherwise.
+
+### Pre-commit hooks
+
+Run `just install-hooks` once per clone to wire up [prek](https://github.com/j178/prek) (a drop-in `pre-commit` runner). On every `git commit` it runs biome (lint + format, **warnings fail**), the test suite, and a `script.js`-is-in-sync check — the same gates CI enforces — so a broken commit is caught locally instead of on the PR. Config lives in [`.pre-commit-config.yaml`](./.pre-commit-config.yaml); bypass in an emergency with `git commit --no-verify`.
 
 Tests cover the pure-logic layer (storage, migration, cache, time formatting, import/export parsing). Rendering and GM_* integration are verified manually in a userscript manager.
 

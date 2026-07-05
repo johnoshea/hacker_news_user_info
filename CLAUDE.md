@@ -12,6 +12,7 @@ A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 4. **Listing-page enhancements** (any page whose story table is found by `getStoryListTable()` in `src/dom.js` — anchors off a `tr.athing.submission` row, excluding the item-page fatitem header): a "sort: …" dropdown re-orders the story list in place — `default` / `time` / `score` / `ratio`, plus a `reverse` link.
 5. **`/user` page enhancement**: plain-text URLs and email addresses in the about cell get turned into clickable links.
 6. **Watch-for-replies cross-page layer**: `setupWatchedListingHighlights` runs on listing pages (anything `getStoryListTable()` resolves); for each story whose thread contains a watched comment, fires a throttle-aware Firebase API recheck and adds `.hn-watched-link` (bold HN orange + `★ ` prefix) to the "n comments" link when new direct replies have arrived since you started watching.
+7. **Watch-whole-story layer**: a per-*story* companion to (6). `setupStoryWatchToggle` (item pages) adds a 👁 to the fatitem subtext that persists `watchedStories[itemId]` with the comment count you've seen; `setupWatchedStoryHighlights` (listing pages) flags a watched story's "n comments" link (★ + bold + a `(+N)` delta) when the count HN renders now exceeds that `seenCount`. Unlike (6) it makes **no** API calls — both the item-page fatitem and the listing row render the count in the DOM (`parseCommentCount`), so the two surfaces just compare integers.
 
 `src/main.js` runs the legibility passes (`applyDownvotedClass`, `transformQuotes`), `setupLinkifyUserAbout`, `setupSortStories`, and `setupWatchedListingHighlights` on every HN page (each feature internally checks whether its page is the right one). The enrichment passes (`setupCommentBoxToggle`, `setupClickIndentToggle`, `setupCollapseRootComment`, `transformBackticksToMonospace`, `setupToggleAllComments`, `setupHighlightUnreadComments`, `userRender.renderAllUsernames`, `setupItemInfoHover`, `setupReplyInline`, `toolbar.mount`) run only on item pages. `setupUserInfoHover` runs last and on every HN page (the feature internally skips `/user`); it has to come after `renderAllUsernames` so the hover handler lands on the visible cloned `.hnuser` rather than the now-hidden original.
 
@@ -22,9 +23,16 @@ A Tampermonkey/Violentmonkey userscript with two cooperating layers:
 - **Format**: `just fmt` (or `biome format --write src/ tests/ scripts/`)
 - **Build**: `just build` (or `node scripts/build.js`) — concatenates `src/` into the single `script.js` userscript bundle
 - **All of the above**: `just check` (lint + fmt + test + build — the pre-commit gate)
+- **Install hooks**: `just install-hooks` (or `prek install`) — wires up the git pre-commit hooks, once per clone
 - **Run**: load `script.js` in a userscript manager (Tampermonkey/Violentmonkey)
 
 After any edit under `src/`, run `just build` (or `just check`) so `script.js` stays in sync. CI fails the PR if `script.js` doesn't match a fresh build of `src/`.
+
+Biome warnings are treated as errors: `just biome`/`just lint` and CI both pass `--error-on-warnings`, so a warning blocks the commit and the PR rather than exiting 0 silently.
+
+### Pre-commit hooks (prek)
+
+`.pre-commit-config.yaml` defines three local hooks run by [prek](https://github.com/j178/prek) (a drop-in `pre-commit` runner) on every `git commit`; activate with `just install-hooks`. Each hook shells out to a `just` recipe so local and CI run identical commands: `just biome` (lint + format, warnings fail), `just test`, and `just verify-build`. `verify-build` rebuilds `script.js` and fails if it drifts from the committed artifact — ignoring the `@version` line exactly as CI's `git diff -I '^// @version'` does, and restoring the working tree on a clean result so no version-only churn is left behind. Bypass in an emergency with `git commit --no-verify`.
 
 ## Repository layout
 
@@ -35,13 +43,15 @@ src/
                              findCommentRootIndices, splitBackticks,
                              findNewCommentIds, isReadCommentEntryFresh,
                              pruneExpiredReadComments, truncateText, extractDomain,
-                             linkifySegments, sortStoriesBy,
+                             linkifySegments, sortStoriesBy, parseCommentCount,
                              shouldAutoCollapseAuthor, parseParentIdFromHref,
                              splitHtmlIntoParagraphs
   state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
+                             (createStore also exposes the story-watch methods:
+                             get/set/removeStoryWatch, getWatchedStories, pruneWatchedStories)
   dom.js                     h() factory, findCommentParent, isItemPage, getItemPageId,
-                             getStoryListTable
+                             getStoryListTable, findCommentsLink
   styles.js                  CSS as a single tagged-template export (STYLES)
   api.js                     createApi factory: fetchUser with cache + inflight + timeout
   features/
@@ -77,6 +87,10 @@ src/
                              pages — sorts by default / time / score / ratio + reverse
     reply-inline.js          setupReplyInline: makes reply/edit/delete links inject the
                              relevant HN form into the comment instead of navigating away
+    story-watch-toggle.js    setupStoryWatchToggle: per-STORY 👁 toggle in the
+                             fatitem subtext; persists watchedStories[itemId] with the
+                             comment count seen now; on load, a watched story's seenCount
+                             is refreshed to the current count (clears the listing flag)
     user-render.js           createUserRender factory: renderAllUsernames + per-user rerender
                              (also adds the .hn-op class + " [op]" marker on OP's comments)
     watch-toggles.js         setupWatchToggles: per-comment 👁/👁‍🗨 toggle in the
@@ -91,6 +105,10 @@ src/
                              pages, restyles the "n comments" link of stories
                              whose thread contains a watched comment with new
                              replies (★ + bold HN orange)
+    watched-story-highlights.js  setupWatchedStoryHighlights: on listing pages,
+                             flags a watched STORY's "n comments" link (★ + bold +
+                             "(+N)") when its count grew past the seenCount from
+                             your last visit. No API — reads the count off the row
     tag-manager.js           createTagManager factory: overlay state machine
     toolbar.js               createToolbar factory: floating Save/Restore-state buttons
   main.js                    Bootstrap: builds backend, store, api, features; wires
@@ -140,7 +158,8 @@ hn_state: { schemaVersion: 2,
 hn_cache: { cache:           { <user>: { created, karma, about, fetchedAt } },
             itemCache:       { <itemId>: { title, ..., kids, fetchedAt } },
             readComments:    { <itemId>: { ids: [...], fetchedAt } },
-            watchedComments: { <commentId>: { itemId, seenKids, latestKids, lastCheckedAt, addedAt } } }
+            watchedComments: { <commentId>: { itemId, seenKids, latestKids, lastCheckedAt, addedAt } },
+            watchedStories:  { <itemId>: { seenCount, fetchedAt } } }
 ```
 Callers never touch `GM_setValue`/`GM_getValue` directly — they go through the `store` object returned by `createStore(backend)` in `src/state.js`, where `backend` is the `{ get, set, list }` adapter that `src/main.js` builds around the `GM_*` APIs. The store reads both keys once and merges them into one in-memory snapshot, so every getter still reads `load().<field>` regardless of which key a field lives on.
 
@@ -223,7 +242,7 @@ Each overlay row is keyed by the tag's name as it was when the overlay opened. P
 
 Exposed as a factory: `createToolbar({ store })` → `{ mount }`. `mount()` builds a small draggable bar in the top-right with Save state / Restore state buttons.
 
-Export format extends the v0.3 shape with a `watches` slot, but is otherwise backward compatible: `{ customTags, users, watches }`. Old backups without `watches` import as before with an empty watch list. `stateToExport(state)` (in `src/state.js`) produces it from a snapshot of the store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import calls `store.replaceAll(parsed)` (one write to `hn_state`, one to `hn_cache`) and reloads.
+Export format extends the v0.3 shape with `watches` and `storyWatches` slots, but is otherwise backward compatible: `{ customTags, users, watches, storyWatches }`. Old backups without either slot import as before with empty maps. `stateToExport(state)` (in `src/state.js`) produces it from a snapshot of the store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import calls `store.replaceAll(parsed)` (one write to `hn_state`, one to `hn_cache`) and reloads.
 
 ### Watch-for-replies (`src/features/watch-toggles.js`, `watched-comment-nav.js`, `watched-listing-highlights.js`)
 
@@ -237,6 +256,16 @@ Lifecycle: watches persist until the user toggles off. A 14-day TTL (`WATCH_TTL_
 
 The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one watched comment WITH new direct replies is on the page, jumping between those comments in document order. Watched comments with no new replies are not nav targets — the buttons exist to surface activity, so a quiet watch shouldn't pull the user there. `watched-comment-nav` discovers the toolbar's button container via the new `toolbar.getButtonsContainer()` accessor — the toolbar itself doesn't know about watches.
 
+### Watch-whole-story (`src/features/story-watch-toggle.js`, `watched-story-highlights.js`)
+
+A per-*story* companion that flags whole threads with new comments on the listings, rather than replies to one subtree. It is deliberately lighter than the per-comment watch: the state is just `watchedStories[itemId] = { seenCount, fetchedAt }` (in `hn_cache`), and there is **no** background API recheck — HN renders the total comment count on both the item-page fatitem and every listing row, so `parseCommentCount` reads it off the DOM and the two surfaces compare integers.
+
+`setupStoryWatchToggle` (item pages) reads the fatitem's "n comments" count, adds a 👁 to the subtext (reusing `.hn-watch-icon`), and on click persists or removes the watch, seeding `seenCount` with the count shown now. On load, a story that is already watched has its `seenCount` refreshed to the current count and its `fetchedAt` stamped — the "visiting the thread clears the flag" step and the story analogue of `markWatchSeen`. Non-watched stories are never auto-tracked; this is strictly opt-in.
+
+`setupWatchedStoryHighlights` (listing pages, gated on `getStoryListTable()`) walks the watched-stories map, and for each story present on the listing computes `delta = currentCount − seenCount`; when `delta > 0` it adds `.hn-watched-link` (the same ★ + bold-orange rule the comment pass uses — the two compose idempotently on the same link) and appends a `.hn-new-count` `(+N)` span via `link.after(...)`. Both passes share `findCommentsLink` (extracted to `dom.js`, since the build forbids a duplicate top-level function across feature modules and both the fatitem toggle and the two listing passes need it).
+
+Lifecycle mirrors the comment watch: persists until toggled off, swept by a 14-day TTL (`WATCH_TTL_MS`, keyed on `fetchedAt` = last visit) via `store.pruneWatchedStories` on both item- and listing-page loads. Known limitation: detection is a count delta, so comments *deleted* below `seenCount` between visits can mask a few new ones — the in-thread `.hn-new-comment` tint still surfaces them once the thread is opened.
+
 ### Wiring (`src/main.js`)
 
 `main.js` is the bootstrap and the only place the GM_* globals are referenced for setup:
@@ -248,8 +277,8 @@ The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one
 5. `createTagManager` and `createUserRender` are constructed with mutual references (each closes over a getter for the other; both bindings exist by the time either's stored callback runs on a click).
 6. `createToolbar({ store, backend })` for export/import.
 7. `GM_addValueChangeListener(STATE_KEY, …)` for cross-tab sync — `store._applyRemoteChange` diffs the write and returns the affected users; the listener returns early on cache-only writes, otherwise calls `tagManager.getActive()?.markStale()` and the user-render rerender helpers for just those users.
-8. Always: `applyDownvotedClass()`, `transformQuotes()`.
-9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `userRender.renderAllUsernames()`, `toolbar.mount()`, `setupWatchedCommentNav()`, `setupWatchToggles()`. The nav must capture its targets before `setupWatchToggles`'s page-load sync runs — that sync calls `markWatchSeen` synchronously on the "not stale" path (when the listing-page recheck just ran within the 60s throttle), and `markWatchSeen` sets `seenKids = latestKids`, zeroing the `hasNew` predicate the nav reads.
+8. Always (each feature internally gates its own page): `applyDownvotedClass()`, `transformQuotes()`, `setupLinkifyUserAbout()`, `setupSortStories()`, `setupWatchedListingHighlights()`, `setupWatchedStoryHighlights()`, and `setupUserInfoHover()` last.
+9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `setupStoryWatchToggle()`, `userRender.renderAllUsernames()`, `toolbar.mount()`, `setupWatchedCommentNav()`, `setupWatchToggles()`. The nav must capture its targets before `setupWatchToggles`'s page-load sync runs — that sync calls `markWatchSeen` synchronously on the "not stale" path (when the listing-page recheck just ran within the 60s throttle), and `markWatchSeen` sets `seenKids = latestKids`, zeroing the `hasNew` predicate the nav reads.
 
 ## Userscript metadata
 

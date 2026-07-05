@@ -51,3 +51,18 @@ export function getStoryListTable() {
 	if (!table || table.classList.contains("fatitem")) return null;
 	return table;
 }
+
+// Given a story's `tr.athing.submission` row (on a listing) or the item
+// page's fatitem header row, return its "n comments" link. HN puts the
+// subtext (score, by-user, age, hide, comments) on the next sibling row;
+// the comments link is the last `item?id=` anchor there (ahead of it sit
+// the age link and, on listings, nothing else that matches). Returns null
+// if the row has no subtext or no such link (e.g. a jobs post). Shared by
+// the watched-comment and watched-story listing passes plus the
+// story-watch toggle, so it lives here rather than in any one feature.
+export function findCommentsLink(athingRow) {
+	const subtext = athingRow?.nextElementSibling;
+	if (!subtext) return null;
+	const links = subtext.querySelectorAll('a[href^="item?id="]');
+	return links[links.length - 1] || null;
+}
