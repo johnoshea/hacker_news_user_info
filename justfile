@@ -1,30 +1,30 @@
+# Bare `just` runs the test suite.
 default: test
 
+# Run the Node test suite (pure-logic modules under tests/).
 test:
     node --test "tests/*.test.js"
 
-# `biome check` runs lint + format + assist (organize-imports). Mirrors
-# what CI runs, so a clean `just check` locally means a clean CI run too.
-# `just lint` and `just fmt` are kept as ad-hoc shortcuts for tighter
-# loops, but the canonical pre-commit gate is `biome check --write`.
+# Lint + format + organize-imports, autofixing; warnings fail. The pre-commit/CI gate.
 biome:
     biome check --write --error-on-warnings src/ tests/ scripts/
 
+# Lint only (autofix; warnings fail) — a tighter-loop shortcut for `biome`.
 lint:
     biome lint --write --error-on-warnings src/ tests/ scripts/
 
+# Format only — a tighter-loop shortcut for `biome`.
 fmt:
     biome format --write src/ tests/ scripts/
 
+# Rebuild the single-file script.js userscript bundle from src/.
 build:
     node scripts/build.js
 
+# Full local gate: lint + format + test + build (mirrors what CI runs).
 check: biome test build
 
-# Rebuild script.js and fail if the committed artifact is stale, ignoring the
-# @version line (which always lags one commit, exactly as CI's diff does). On a
-# clean result the version-only churn is discarded so the working tree is left
-# untouched; on a real mismatch script.js is left rebuilt for `git add`.
+# Fail if the committed script.js is out of date with src/ (ignoring the @version line).
 verify-build:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -36,6 +36,6 @@ verify-build:
         exit 1
     fi
 
-# Install the prek-managed git pre-commit hooks (run once per clone).
+# Install the prek git pre-commit hooks (run once per clone).
 install-hooks:
     prek install
