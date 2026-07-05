@@ -50,24 +50,6 @@ export function setupHighlightUnreadComments({ store }) {
 		}
 	}
 
-	// TEMP DEBUG: one compact line per item-page load so we can diagnose
-	// missing-highlight reports. Remove once #<issue> is resolved.
-	console.log("[hn-debug] highlight-unread", {
-		itemId,
-		visibilityState: document.visibilityState,
-		wasHidden: document.hidden,
-		storedAgeSec: stored ? Math.round((now - stored.fetchedAt) / 1000) : null,
-		storedCount: stored ? stored.ids.length : 0,
-		currentCount: currentIds.length,
-		newCount: newIds.length,
-		isFreshSecondVisit,
-		nav:
-			performance
-				.getEntriesByType("navigation")
-				.map((e) => e.type)
-				.join(",") || null,
-	});
-
 	// Always update the stored snapshot to match what's currently on
 	// the page — next visit's "new" set is derived from this.
 	store.setReadComments(itemId, currentIds, now);

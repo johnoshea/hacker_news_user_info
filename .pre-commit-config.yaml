@@ -1,0 +1,25 @@
+# Managed by prek (https://github.com/j178/prek) — a drop-in pre-commit runner.
+# Activate in a fresh clone with `just install-hooks` (i.e. `prek install`).
+# Each hook shells out to the matching `just` recipe so the local gate and CI
+# run the exact same commands. Bypass in an emergency with `git commit --no-verify`.
+repos:
+  - repo: local
+    hooks:
+      - id: biome
+        name: biome check (lint + format, warnings are errors)
+        entry: just biome
+        language: system
+        files: ^(src|tests|scripts)/.*\.js$
+        pass_filenames: false
+      - id: test
+        name: node --test
+        entry: just test
+        language: system
+        files: ^(src|tests)/.*\.js$
+        pass_filenames: false
+      - id: verify-build
+        name: script.js is in sync with src/
+        entry: just verify-build
+        language: system
+        files: ^src/.*\.js$
+        pass_filenames: false

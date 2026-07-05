@@ -53,7 +53,7 @@ function renderParagraphs(paragraphs, hasMore) {
 // API path, which can return a [deleted] placeholder or null).
 function loadFromDom(parentId) {
 	const row = document.getElementById(parentId);
-	if (!row || row.tagName !== "TR") return null;
+	if (row?.tagName !== "TR") return null;
 	const commtext = row.querySelector(".commtext");
 	if (!commtext) return null;
 	const paragraphs = splitHtmlIntoParagraphs(commtext.innerHTML);

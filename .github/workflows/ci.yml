@@ -26,7 +26,7 @@ jobs:
           version: "2.4.10"
 
       - name: Biome check
-        run: biome check src/ tests/ scripts/
+        run: biome check --error-on-warnings src/ tests/ scripts/
 
       - name: Verify script.js is up to date with src/
         # Catches PRs that change src/ but forget to rebuild. Users install the

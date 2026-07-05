@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+df90c73
+// @version      0.11+c0ae408
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -2389,24 +2389,6 @@ function setupHighlightUnreadComments({ store }) {
 		}
 	}
 
-	// TEMP DEBUG: one compact line per item-page load so we can diagnose
-	// missing-highlight reports. Remove once #<issue> is resolved.
-	console.log("[hn-debug] highlight-unread", {
-		itemId,
-		visibilityState: document.visibilityState,
-		wasHidden: document.hidden,
-		storedAgeSec: stored ? Math.round((now - stored.fetchedAt) / 1000) : null,
-		storedCount: stored ? stored.ids.length : 0,
-		currentCount: currentIds.length,
-		newCount: newIds.length,
-		isFreshSecondVisit,
-		nav:
-			performance
-				.getEntriesByType("navigation")
-				.map((e) => e.type)
-				.join(",") || null,
-	});
-
 	// Always update the stored snapshot to match what's currently on
 	// the page — next visit's "new" set is derived from this.
 	store.setReadComments(itemId, currentIds, now);
@@ -2757,7 +2739,7 @@ function renderParagraphs(paragraphs, hasMore) {
 // API path, which can return a [deleted] placeholder or null).
 function loadFromDom(parentId) {
 	const row = document.getElementById(parentId);
-	if (!row || row.tagName !== "TR") return null;
+	if (row?.tagName !== "TR") return null;
 	const commtext = row.querySelector(".commtext");
 	if (!commtext) return null;
 	const paragraphs = splitHtmlIntoParagraphs(commtext.innerHTML);
