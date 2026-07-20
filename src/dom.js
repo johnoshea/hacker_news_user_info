@@ -38,6 +38,25 @@ export function getItemPageId() {
 	return params.get("id") || null;
 }
 
+// Run fn immediately if the tab is visible, otherwise the first time it
+// becomes visible. Userscripts run at load even in background tabs
+// (cmd-click a story, never switch to it), so any write meaning "the
+// user has now seen this page" — the unread-comment baseline, a watch's
+// seenKids, a story watch's seenCount — must go through this gate or a
+// never-viewed tab silently consumes the signal.
+export function runWhenPageVisible(fn) {
+	if (document.visibilityState === "visible") {
+		fn();
+		return;
+	}
+	const onChange = () => {
+		if (document.visibilityState !== "visible") return;
+		document.removeEventListener("visibilitychange", onChange);
+		fn();
+	};
+	document.addEventListener("visibilitychange", onChange);
+}
+
 // Find the listing-page story table. HN's older markup tagged it with
 // `class="itemlist"`; the current markup leaves the table unclassed
 // inside `<tr id="bigbox">`, so we anchor off the per-story

@@ -16,7 +16,13 @@
 // markWatchSeen, i.e. the "visiting the thread clears the flag" step.
 
 import { WATCH_TTL_MS } from "../config.js";
-import { findCommentsLink, getItemPageId, h, isItemPage } from "../dom.js";
+import {
+	findCommentsLink,
+	getItemPageId,
+	h,
+	isItemPage,
+	runWhenPageVisible,
+} from "../dom.js";
 import { parseCommentCount } from "../parsing.js";
 
 // Distinct top-level names from watch-toggles.js: the build fuses every
@@ -52,9 +58,12 @@ export function setupStoryWatchToggle({ store }) {
 
 	// Visiting a watched story acknowledges its current count: refresh
 	// seenCount (clears the listing flag) and stamp the visit (refreshes
-	// the TTL).
+	// the TTL). Deferred until the tab is shown — a background-tab load
+	// isn't a visit and must not clear the flag.
 	if (initiallyWatched) {
-		store.setStoryWatch(itemId, currentCount, Date.now());
+		runWhenPageVisible(() => {
+			store.setStoryWatch(itemId, currentCount, Date.now());
+		});
 	}
 
 	const icon = h("span", { class: "hn-watch-icon" });

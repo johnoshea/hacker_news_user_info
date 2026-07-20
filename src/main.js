@@ -112,10 +112,10 @@ if (isItemPage()) {
 	// toolbar.mount() and setupWatchedCommentNav() must run BEFORE
 	// setupWatchToggles(). The page-load sync inside setupWatchToggles
 	// calls markWatchSeen synchronously on the "not stale" path (i.e.
-	// when the listing-page recheck just ran within the throttle), which
-	// sets seenKids = latestKids and zeroes out the hasNew predicate the
-	// nav reads. Capture the nav targets first, then let the sync
-	// acknowledge the latest kids.
+	// when the listing-page recheck just ran within the throttle) when
+	// the tab is visible, which sets seenKids = latestKids and zeroes out
+	// the hasNew predicate the nav reads. Capture the nav targets first,
+	// then let the sync acknowledge the latest kids.
 	toolbar.mount();
 	setupWatchedCommentNav({ store, toolbar });
 	setupWatchToggles({ store, fetchItem });

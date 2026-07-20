@@ -15,7 +15,7 @@
 // be invisible there.)
 
 import { READ_COMMENTS_TTL_MS } from "../config.js";
-import { getItemPageId } from "../dom.js";
+import { getItemPageId, runWhenPageVisible } from "../dom.js";
 import { findNewCommentIds } from "../parsing.js";
 
 function getCurrentCommentIds() {
@@ -50,7 +50,11 @@ export function setupHighlightUnreadComments({ store }) {
 		}
 	}
 
-	// Always update the stored snapshot to match what's currently on
-	// the page — next visit's "new" set is derived from this.
-	store.setReadComments(itemId, currentIds, now);
+	// Update the stored snapshot to match what's currently on the page —
+	// next visit's "new" set is derived from this. Deferred until the tab
+	// is actually shown: a load in a background tab must not mark its
+	// comments as read, or the highlights are gone before anyone saw them.
+	runWhenPageVisible(() => {
+		store.setReadComments(itemId, currentIds, Date.now());
+	});
 }

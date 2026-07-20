@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+cc76bdd
+// @version      0.11+aa6611c
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -1329,6 +1329,25 @@ function getItemPageId() {
 	return params.get("id") || null;
 }
 
+// Run fn immediately if the tab is visible, otherwise the first time it
+// becomes visible. Userscripts run at load even in background tabs
+// (cmd-click a story, never switch to it), so any write meaning "the
+// user has now seen this page" — the unread-comment baseline, a watch's
+// seenKids, a story watch's seenCount — must go through this gate or a
+// never-viewed tab silently consumes the signal.
+function runWhenPageVisible(fn) {
+	if (document.visibilityState === "visible") {
+		fn();
+		return;
+	}
+	const onChange = () => {
+		if (document.visibilityState !== "visible") return;
+		document.removeEventListener("visibilitychange", onChange);
+		fn();
+	};
+	document.addEventListener("visibilitychange", onChange);
+}
+
 // Find the listing-page story table. HN's older markup tagged it with
 // `class="itemlist"`; the current markup leaves the table unclassed
 // inside `<tr id="bigbox">`, so we anchor off the per-story
@@ -2493,9 +2512,13 @@ function setupHighlightUnreadComments({ store }) {
 		}
 	}
 
-	// Always update the stored snapshot to match what's currently on
-	// the page — next visit's "new" set is derived from this.
-	store.setReadComments(itemId, currentIds, now);
+	// Update the stored snapshot to match what's currently on the page —
+	// next visit's "new" set is derived from this. Deferred until the tab
+	// is actually shown: a load in a background tab must not mark its
+	// comments as read, or the highlights are gone before anyone saw them.
+	runWhenPageVisible(() => {
+		store.setReadComments(itemId, currentIds, Date.now());
+	});
 }
 
 
@@ -3374,9 +3397,12 @@ function setupStoryWatchToggle({ store }) {
 
 	// Visiting a watched story acknowledges its current count: refresh
 	// seenCount (clears the listing flag) and stamp the visit (refreshes
-	// the TTL).
+	// the TTL). Deferred until the tab is shown — a background-tab load
+	// isn't a visit and must not clear the flag.
 	if (initiallyWatched) {
-		store.setStoryWatch(itemId, currentCount, Date.now());
+		runWhenPageVisible(() => {
+			store.setStoryWatch(itemId, currentCount, Date.now());
+		});
 	}
 
 	const icon = h("span", { class: "hn-watch-icon" });
@@ -3947,17 +3973,25 @@ function setupWatchToggles({ store, fetchItem }) {
 		if (entry.itemId !== itemId) continue;
 		if (!document.getElementById(commentId)) continue;
 		if (!isWatchCheckStale(entry, now, WATCH_RECHECK_THROTTLE_MS)) {
-			// Fresh enough — still acknowledge the current latestKids
-			// (the user has visited the page).
-			store.markWatchSeen(commentId, now);
+			// Fresh enough — still acknowledge the current latestKids, but
+			// only once the tab is actually shown. A background-tab load
+			// must not count as a visit, or the "new replies" flag is
+			// consumed before the user ever sees the page.
+			runWhenPageVisible(() => {
+				store.markWatchSeen(commentId, Date.now());
+			});
 			continue;
 		}
 		fetchItem(commentId, { fresh: true }).then((digest) => {
 			if (store.getWatchedComment(commentId) === null) return; // toggled off mid-flight
 			const kids = digest?.kids || [];
-			const resolveNow = Date.now();
-			store.updateWatchKids(commentId, kids, resolveNow);
-			store.markWatchSeen(commentId, resolveNow);
+			store.updateWatchKids(commentId, kids, Date.now());
+			// latestKids refreshes immediately (keeps the listing flag
+			// accurate); the acknowledgement waits for visibility, same as
+			// the not-stale path. markWatchSeen no-ops if toggled off by then.
+			runWhenPageVisible(() => {
+				store.markWatchSeen(commentId, Date.now());
+			});
 		});
 	}
 }
@@ -4764,10 +4798,10 @@ if (isItemPage()) {
 	// toolbar.mount() and setupWatchedCommentNav() must run BEFORE
 	// setupWatchToggles(). The page-load sync inside setupWatchToggles
 	// calls markWatchSeen synchronously on the "not stale" path (i.e.
-	// when the listing-page recheck just ran within the throttle), which
-	// sets seenKids = latestKids and zeroes out the hasNew predicate the
-	// nav reads. Capture the nav targets first, then let the sync
-	// acknowledge the latest kids.
+	// when the listing-page recheck just ran within the throttle) when
+	// the tab is visible, which sets seenKids = latestKids and zeroes out
+	// the hasNew predicate the nav reads. Capture the nav targets first,
+	// then let the sync acknowledge the latest kids.
 	toolbar.mount();
 	setupWatchedCommentNav({ store, toolbar });
 	setupWatchToggles({ store, fetchItem });

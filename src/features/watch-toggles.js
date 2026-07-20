@@ -17,7 +17,7 @@
 // This is the "visit clears new" step.
 
 import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
-import { getItemPageId, h, isItemPage } from "../dom.js";
+import { getItemPageId, h, isItemPage, runWhenPageVisible } from "../dom.js";
 import { isWatchCheckStale } from "../parsing.js";
 
 const ICON_OFF = "👁";
@@ -115,17 +115,25 @@ export function setupWatchToggles({ store, fetchItem }) {
 		if (entry.itemId !== itemId) continue;
 		if (!document.getElementById(commentId)) continue;
 		if (!isWatchCheckStale(entry, now, WATCH_RECHECK_THROTTLE_MS)) {
-			// Fresh enough — still acknowledge the current latestKids
-			// (the user has visited the page).
-			store.markWatchSeen(commentId, now);
+			// Fresh enough — still acknowledge the current latestKids, but
+			// only once the tab is actually shown. A background-tab load
+			// must not count as a visit, or the "new replies" flag is
+			// consumed before the user ever sees the page.
+			runWhenPageVisible(() => {
+				store.markWatchSeen(commentId, Date.now());
+			});
 			continue;
 		}
 		fetchItem(commentId, { fresh: true }).then((digest) => {
 			if (store.getWatchedComment(commentId) === null) return; // toggled off mid-flight
 			const kids = digest?.kids || [];
-			const resolveNow = Date.now();
-			store.updateWatchKids(commentId, kids, resolveNow);
-			store.markWatchSeen(commentId, resolveNow);
+			store.updateWatchKids(commentId, kids, Date.now());
+			// latestKids refreshes immediately (keeps the listing flag
+			// accurate); the acknowledgement waits for visibility, same as
+			// the not-stale path. markWatchSeen no-ops if toggled off by then.
+			runWhenPageVisible(() => {
+				store.markWatchSeen(commentId, Date.now());
+			});
 		});
 	}
 }
