@@ -42,6 +42,7 @@ src/
   parsing.js                 Pure helpers: timeSince, stripLeadingQuoteMarker, parseTagInput,
                              findCommentRootIndices, splitBackticks,
                              findNewCommentIds, isReadCommentEntryFresh,
+                             watchNavCommentIds,
                              pruneExpiredReadComments, truncateText, extractDomain,
                              linkifySegments, sortStoriesBy, parseCommentCount,
                              shouldAutoCollapseAuthor, parseParentIdFromHref,
@@ -101,7 +102,9 @@ src/
     watched-comment-nav.js   setupWatchedCommentNav: appends ↑ watch / watch ↓
                              buttons to the toolbar when at least one watched
                              comment with new direct replies is on the page;
-                             disabled state at ends
+                             disabled state at ends; returns { refresh } so the
+                             page-load sync can add targets its fresh fetches
+                             discover
     watched-listing-highlights.js  setupWatchedListingHighlights: on listing
                              pages, restyles the "n comments" link of stories
                              whose thread contains a watched comment with new
@@ -259,7 +262,7 @@ Reply detection is proactive: every HN page load (including listing pages) walks
 
 Lifecycle: watches persist until the user toggles off. A 14-day TTL (`WATCH_TTL_MS`) is enforced on every item-page load via `store.pruneWatchedComments` — HN threads rarely receive replies after that window, and the prune stops the list growing forever on cold threads.
 
-The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one watched comment WITH new direct replies is on the page, jumping between those comments in document order. Watched comments with no new replies are not nav targets — the buttons exist to surface activity, so a quiet watch shouldn't pull the user there. `watched-comment-nav` discovers the toolbar's button container via the new `toolbar.getButtonsContainer()` accessor — the toolbar itself doesn't know about watches.
+The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one watched comment WITH new direct replies is on the page, jumping between those comments in document order. Watched comments with no new replies are not nav targets — the buttons exist to surface activity, so a quiet watch shouldn't pull the user there. `watched-comment-nav` discovers the toolbar's button container via the new `toolbar.getButtonsContainer()` accessor — the toolbar itself doesn't know about watches. The nav is not a one-shot pass: it returns `{ refresh }`, and the page-load sync calls it (via the `onWatchesUpdated` hook, after `updateWatchKids` and before scheduling `markWatchSeen`) whenever a fresh fetch lands — so a reply first *discovered* by the item page itself still produces nav buttons instead of being acknowledged invisibly. Targets accumulate as a union across refreshes; an acknowledgement between refreshes can't retract a button that already surfaced.
 
 ### Watch-whole-story (`src/features/story-watch-toggle.js`, `watched-story-highlights.js`)
 
@@ -283,7 +286,7 @@ Lifecycle mirrors the comment watch: persists until toggled off, swept by a 14-d
 6. `createToolbar({ store, backend })` for export/import.
 7. `GM_addValueChangeListener(STATE_KEY, …)` for cross-tab sync — `store._applyRemoteChange` diffs the write and returns the affected users; the listener returns early on cache-only writes, otherwise calls `tagManager.getActive()?.markStale()` and the user-render rerender helpers for just those users.
 8. Always (each feature internally gates its own page): `applyDownvotedClass()`, `transformQuotes()`, `setupLinkifyUserAbout()`, `setupSortStories()`, `setupWatchedListingHighlights()`, `setupWatchedStoryHighlights()`, and `setupUserInfoHover()` last.
-9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `setupStoryWatchToggle()`, `userRender.renderAllUsernames()`, `toolbar.mount()`, `setupWatchedCommentNav()`, `setupWatchToggles()`. The nav must capture its targets before `setupWatchToggles`'s page-load sync runs — that sync calls `markWatchSeen` synchronously on the "not stale" path when the tab is visible (`runWhenPageVisible` runs its callback inline in that case), and `markWatchSeen` sets `seenKids = latestKids`, zeroing the `hasNew` predicate the nav reads.
+9. On item pages only (`isItemPage()`): `setupCommentBoxToggle()`, `setupStoryWatchToggle()`, `userRender.renderAllUsernames()`, `toolbar.mount()`, `setupWatchedCommentNav()`, `setupWatchToggles()`. The nav must capture its targets before `setupWatchToggles`'s page-load sync runs — that sync calls `markWatchSeen` synchronously on the "not stale" path when the tab is visible (`runWhenPageVisible` runs its callback inline in that case), and `markWatchSeen` sets `seenKids = latestKids`, zeroing the `hasNew` predicate the nav reads. The sync's stale-path fetches feed back through `watchNav.refresh` (wired as `onWatchesUpdated`) so replies they discover become nav targets before their own acknowledgement fires.
 
 ## Userscript metadata
 

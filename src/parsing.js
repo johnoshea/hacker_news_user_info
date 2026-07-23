@@ -316,6 +316,22 @@ export function watchesByItemId(map) {
 	return out;
 }
 
+// Nav targets for one item page: ids of watched comments in this thread
+// whose watch has unacknowledged replies. Whether an id has a rendered
+// row on the current page is the caller's (DOM-side) concern. Called at
+// page load and again whenever the page-load sync refreshes latestKids,
+// so a reply first discovered by the item page itself still becomes a
+// nav target.
+export function watchNavCommentIds(watches, itemId) {
+	const out = [];
+	for (const [commentId, entry] of Object.entries(watches || {})) {
+		if (!entry || entry.itemId !== itemId) continue;
+		if (!watchHasNewReplies(entry.seenKids, entry.latestKids)) continue;
+		out.push(commentId);
+	}
+	return out;
+}
+
 // True iff this author's rating crosses the auto-collapse threshold.
 // Threshold is expected to be negative; a rating of 0 (the default
 // for an unrated user) must never collapse. Boundary is inclusive —

@@ -14,7 +14,11 @@
 // Page-load semantics: for every watched comment whose id is present
 // on this page, mark the row, fire a throttle-aware fresh fetchItem
 // and on resolve sync both latestKids and seenKids to the response.
-// This is the "visit clears new" step.
+// This is the "visit clears new" step. `onWatchesUpdated` (optional) is
+// invoked after each resolve refreshes latestKids and BEFORE the
+// acknowledgement is scheduled — the watched-comment-nav uses it to
+// pick up replies this page's own fetch discovered, which the nav's
+// load-time pass (reading persisted state) couldn't have seen.
 
 import { WATCH_RECHECK_THROTTLE_MS, WATCH_TTL_MS } from "../config.js";
 import { getItemPageId, h, isItemPage, runWhenPageVisible } from "../dom.js";
@@ -29,7 +33,7 @@ function setIconState(iconEl, isOn) {
 	iconEl.classList.toggle("hn-watching", isOn);
 }
 
-export function setupWatchToggles({ store, fetchItem }) {
+export function setupWatchToggles({ store, fetchItem, onWatchesUpdated }) {
 	if (!isItemPage()) return;
 	const itemId = getItemPageId();
 	if (!itemId) return;
@@ -128,6 +132,9 @@ export function setupWatchToggles({ store, fetchItem }) {
 			if (store.getWatchedComment(commentId) === null) return; // toggled off mid-flight
 			const kids = digest?.kids || [];
 			store.updateWatchKids(commentId, kids, Date.now());
+			// Let the nav capture any newly-discovered replies before the
+			// acknowledgement below zeroes the hasNew predicate.
+			onWatchesUpdated?.();
 			// latestKids refreshes immediately (keeps the listing flag
 			// accurate); the acknowledgement waits for visibility, same as
 			// the not-stale path. markWatchSeen no-ops if toggled off by then.

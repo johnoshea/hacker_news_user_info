@@ -119,10 +119,16 @@ if (isItemPage()) {
 	// when the listing-page recheck just ran within the throttle) when
 	// the tab is visible, which sets seenKids = latestKids and zeroes out
 	// the hasNew predicate the nav reads. Capture the nav targets first,
-	// then let the sync acknowledge the latest kids.
+	// then let the sync acknowledge the latest kids. The sync's fresh
+	// fetches may discover replies the persisted state didn't have yet;
+	// watchNav.refresh picks those up before each acknowledgement.
 	toolbar.mount();
-	setupWatchedCommentNav({ store, toolbar });
-	setupWatchToggles({ store, fetchItem });
+	const watchNav = setupWatchedCommentNav({ store, toolbar });
+	setupWatchToggles({
+		store,
+		fetchItem,
+		onWatchesUpdated: () => watchNav.refresh(),
+	});
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	setupParentHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();

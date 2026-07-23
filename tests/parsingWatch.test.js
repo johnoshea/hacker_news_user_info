@@ -5,6 +5,7 @@ import {
 	pruneExpiredWatches,
 	watchesByItemId,
 	watchHasNewReplies,
+	watchNavCommentIds,
 } from "../src/parsing.js";
 
 // The watch-for-replies feature stores `seenKids` (replies the user has
@@ -162,4 +163,25 @@ test("watchesByItemId: skips entries missing itemId (defensive)", () => {
 	assert.deepEqual(grouped, {
 		i2: [{ commentId: "c2", hasNew: false }],
 	});
+});
+
+// watchNavCommentIds picks the nav targets for one item page: watches in
+// this thread with unacknowledged replies. Whether each id has a rendered
+// row is the caller's (DOM-side) concern. The watched-comment-nav feature
+// calls this once at load and again whenever the page-load sync refreshes
+// latestKids, so a reply first discovered by the item page itself still
+// produces nav buttons.
+test("watchNavCommentIds: picks this item's watches with new replies", () => {
+	const watches = {
+		1: { itemId: "10", seenKids: [], latestKids: ["k1"] }, // target
+		2: { itemId: "10", seenKids: ["k2"], latestKids: ["k2"] }, // acked
+		3: { itemId: "99", seenKids: [], latestKids: ["k3"] }, // other thread
+	};
+	assert.deepEqual(watchNavCommentIds(watches, "10"), ["1"]);
+});
+
+test("watchNavCommentIds: empty or malformed input yields no targets", () => {
+	assert.deepEqual(watchNavCommentIds({}, "10"), []);
+	assert.deepEqual(watchNavCommentIds(undefined, "10"), []);
+	assert.deepEqual(watchNavCommentIds({ 1: null }, "10"), []);
 });

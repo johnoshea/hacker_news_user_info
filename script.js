@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+5af4564
+// @version      0.11+a607439
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -423,6 +423,22 @@ function watchesByItemId(map) {
 		const hasNew = watchHasNewReplies(entry.seenKids, entry.latestKids);
 		if (!out[entry.itemId]) out[entry.itemId] = [];
 		out[entry.itemId].push({ commentId, hasNew });
+	}
+	return out;
+}
+
+// Nav targets for one item page: ids of watched comments in this thread
+// whose watch has unacknowledged replies. Whether an id has a rendered
+// row on the current page is the caller's (DOM-side) concern. Called at
+// page load and again whenever the page-load sync refreshes latestKids,
+// so a reply first discovered by the item page itself still becomes a
+// nav target.
+function watchNavCommentIds(watches, itemId) {
+	const out = [];
+	for (const [commentId, entry] of Object.entries(watches || {})) {
+		if (!entry || entry.itemId !== itemId) continue;
+		if (!watchHasNewReplies(entry.seenKids, entry.latestKids)) continue;
+		out.push(commentId);
 	}
 	return out;
 }
@@ -3923,7 +3939,11 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 // Page-load semantics: for every watched comment whose id is present
 // on this page, mark the row, fire a throttle-aware fresh fetchItem
 // and on resolve sync both latestKids and seenKids to the response.
-// This is the "visit clears new" step.
+// This is the "visit clears new" step. `onWatchesUpdated` (optional) is
+// invoked after each resolve refreshes latestKids and BEFORE the
+// acknowledgement is scheduled — the watched-comment-nav uses it to
+// pick up replies this page's own fetch discovered, which the nav's
+// load-time pass (reading persisted state) couldn't have seen.
 
 
 
@@ -3936,7 +3956,7 @@ function setIconState(iconEl, isOn) {
 	iconEl.title = isOn ? "Stop watching" : "Watch for replies";
 	iconEl.classList.toggle("hn-watching", isOn);
 }
-function setupWatchToggles({ store, fetchItem }) {
+function setupWatchToggles({ store, fetchItem, onWatchesUpdated }) {
 	if (!isItemPage()) return;
 	const itemId = getItemPageId();
 	if (!itemId) return;
@@ -4035,6 +4055,9 @@ function setupWatchToggles({ store, fetchItem }) {
 			if (store.getWatchedComment(commentId) === null) return; // toggled off mid-flight
 			const kids = digest?.kids || [];
 			store.updateWatchKids(commentId, kids, Date.now());
+			// Let the nav capture any newly-discovered replies before the
+			// acknowledgement below zeroes the hasNew predicate.
+			onWatchesUpdated?.();
 			// latestKids refreshes immediately (keeps the listing flag
 			// accurate); the acknowledgement waits for visibility, same as
 			// the not-stale path. markWatchSeen no-ops if toggled off by then.
@@ -4055,78 +4078,121 @@ function setupWatchToggles({ store, fetchItem }) {
 // seenKids = latestKids and zeroes the hasNew predicate this pass
 // reads. Capture targets first, then let the sync acknowledge.
 //
+// Returns { refresh }. The initial pass reads whatever the store holds
+// at page load; `refresh` is wired (in main.js) to setupWatchToggles'
+// page-load sync, whose fresh fetch may discover replies the persisted
+// state didn't know about yet — either because this page is the first
+// to check since the reply arrived, or because a cross-tab race stalled
+// the last recheck write. Targets accumulate across calls (a union,
+// never recomputed from scratch) so a watch acknowledged between calls
+// keeps its buttons — same capture-then-acknowledge semantics as the
+// initial pass.
+//
 // Adds two buttons to the toolbar's button container when at least
 // one watched comment WITH new replies is present on this page;
 // otherwise mounts nothing — the nav exists to surface activity, so a
 // watched comment with no new replies is not a useful target.
 //
-// "Current position" is tracked as a closure-local index into the
-// list of watched-comment rows, in document order. Initial value -1
+// "Current position" is tracked as the last row navigated to; null
 // means "before any" — the first click on `watch ↓` jumps to the
 // first watched comment. Disabled state is recomputed after every
-// click so a single-watch thread can never click `↑ watch`.
+// click and refresh so a single-watch thread can never click `↑ watch`.
 function setupWatchedCommentNav({ store, toolbar }) {
-	if (!isItemPage()) return;
+	const inert = { refresh() {} };
+	if (!isItemPage()) return inert;
 	const itemId = getItemPageId();
-	if (!itemId) return;
+	if (!itemId) return inert;
 
-	// Resolve every on-page row for a watch in this thread that has
-	// new replies, in DOM order. Watches whose comment id isn't on this
-	// page (e.g. on a later "more" page) are dropped, and watches with
-	// no new replies are dropped — the nav targets only "show me
-	// what's new" comments.
-	const watches = store.getWatchedComments();
-	const rows = [];
-	for (const [commentId, entry] of Object.entries(watches)) {
-		if (entry.itemId !== itemId) continue;
-		if (!watchHasNewReplies(entry.seenKids, entry.latestKids)) continue;
-		const row = document.getElementById(commentId);
-		if (row) rows.push(row);
+	// Union of every on-page row for a watch in this thread that has (or
+	// had, at some point this page-lifetime) new replies. Watches whose
+	// comment id isn't on this page (e.g. on a later "more" page) are
+	// dropped.
+	const targetRows = new Set();
+	let rows = [];
+	let currentRow = null;
+	let prevBtn = null;
+	let nextBtn = null;
+
+	// Add newly-qualifying rows; returns true when the set grew.
+	function collectTargets() {
+		let grew = false;
+		for (const commentId of watchNavCommentIds(
+			store.getWatchedComments(),
+			itemId,
+		)) {
+			const row = document.getElementById(commentId);
+			if (row && !targetRows.has(row)) {
+				targetRows.add(row);
+				grew = true;
+			}
+		}
+		return grew;
 	}
-	if (rows.length === 0) return;
+
 	// Sort by document order. compareDocumentPosition returns a
 	// bitmask; FOLLOWING (4) means `b` comes after `a`.
-	rows.sort((a, b) =>
-		a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
-	);
-
-	const buttons = toolbar.getButtonsContainer();
-	if (!buttons) return;
-
-	let currentIndex = -1;
-
-	const prevBtn = h("button", {
-		class: "hn-toolbar-btn hn-watch-nav hn-watch-nav-prev",
-		text: "↑ watch",
-	});
-	const nextBtn = h("button", {
-		class: "hn-toolbar-btn hn-watch-nav hn-watch-nav-next",
-		text: "watch ↓",
-	});
-
-	function updateDisabled() {
-		// prev disabled when at or before the first
-		prevBtn.disabled = currentIndex <= 0;
-		// next disabled when at the last
-		nextBtn.disabled = currentIndex >= rows.length - 1;
+	function rebuildRows() {
+		rows = Array.from(targetRows).sort((a, b) =>
+			a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+		);
 	}
 
-	prevBtn.addEventListener("click", () => {
-		if (currentIndex <= 0) return;
-		currentIndex -= 1;
-		rows[currentIndex].scrollIntoView({ behavior: "smooth", block: "center" });
-		updateDisabled();
-	});
-	nextBtn.addEventListener("click", () => {
-		if (currentIndex >= rows.length - 1) return;
-		currentIndex += 1;
-		rows[currentIndex].scrollIntoView({ behavior: "smooth", block: "center" });
-		updateDisabled();
-	});
+	function currentIndex() {
+		return currentRow ? rows.indexOf(currentRow) : -1;
+	}
 
-	buttons.appendChild(prevBtn);
-	buttons.appendChild(nextBtn);
-	updateDisabled();
+	function updateDisabled() {
+		const i = currentIndex();
+		// prev disabled when at or before the first
+		prevBtn.disabled = i <= 0;
+		// next disabled when at the last
+		nextBtn.disabled = i >= rows.length - 1;
+	}
+
+	function goTo(i) {
+		currentRow = rows[i];
+		currentRow.scrollIntoView({ behavior: "smooth", block: "center" });
+		updateDisabled();
+	}
+
+	function mountButtons() {
+		const buttons = toolbar.getButtonsContainer();
+		if (!buttons) return;
+		prevBtn = h("button", {
+			class: "hn-toolbar-btn hn-watch-nav hn-watch-nav-prev",
+			text: "↑ watch",
+		});
+		nextBtn = h("button", {
+			class: "hn-toolbar-btn hn-watch-nav hn-watch-nav-next",
+			text: "watch ↓",
+		});
+		prevBtn.addEventListener("click", () => {
+			const i = currentIndex();
+			if (i <= 0) return;
+			goTo(i - 1);
+		});
+		nextBtn.addEventListener("click", () => {
+			const i = currentIndex();
+			if (i >= rows.length - 1) return;
+			goTo(i + 1);
+		});
+		buttons.appendChild(prevBtn);
+		buttons.appendChild(nextBtn);
+		updateDisabled();
+	}
+
+	function refresh() {
+		if (!collectTargets()) return;
+		rebuildRows();
+		if (prevBtn) {
+			updateDisabled();
+		} else {
+			mountButtons();
+		}
+	}
+
+	refresh();
+	return { refresh };
 }
 
 
@@ -4853,10 +4919,16 @@ if (isItemPage()) {
 	// when the listing-page recheck just ran within the throttle) when
 	// the tab is visible, which sets seenKids = latestKids and zeroes out
 	// the hasNew predicate the nav reads. Capture the nav targets first,
-	// then let the sync acknowledge the latest kids.
+	// then let the sync acknowledge the latest kids. The sync's fresh
+	// fetches may discover replies the persisted state didn't have yet;
+	// watchNav.refresh picks those up before each acknowledgement.
 	toolbar.mount();
-	setupWatchedCommentNav({ store, toolbar });
-	setupWatchToggles({ store, fetchItem });
+	const watchNav = setupWatchedCommentNav({ store, toolbar });
+	setupWatchToggles({
+		store,
+		fetchItem,
+		onWatchesUpdated: () => watchNav.refresh(),
+	});
 	setupItemInfoHover({ fetchItem, popup: hoverPopup });
 	setupParentHover({ fetchItem, popup: hoverPopup });
 	setupReplyInline();
