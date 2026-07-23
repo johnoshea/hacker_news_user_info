@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createStore, migrateCacheKeySplit } from "../src/state.js";
+import {
+	createStore,
+	migrateCacheKeySplit,
+	migrateSeenKeySplit,
+} from "../src/state.js";
 
 function makeFakeBackend(initial = {}) {
 	const data = { ...initial };
@@ -112,7 +116,10 @@ test("migrateCacheKeySplit: splits a monolithic blob into two keys", () => {
 	assert.deepEqual(user.tags, { a: ["x"] });
 	assert.deepEqual(user.colors, { x: { bgColor: "c", textColor: "black" } });
 
-	// And a fresh store reads the migrated data back through both keys.
+	// And a fresh store reads the migrated data back — after the follow-up
+	// seen-key migration that main.js always chains on (watches live in
+	// hn_seen since the 0.12 split).
+	migrateSeenKeySplit(backend);
 	const store = createStore(backend);
 	assert.equal(store.getRating("a"), 3);
 	assert.deepEqual(store.getCachedUser("u", 5, 60_000), {

@@ -1,12 +1,17 @@
-// Storage is split across two keys. hn_state holds the user's curated data
+// Storage is split across three keys. hn_state holds the user's curated data
 // (ratings, tags, tag colours) — written only on explicit edits, so cross-tab
-// writes to it are rare. hn_cache holds the churny background caches (user/item
-// digests, read-comment lists, watch entries) that the page-load fetch storm
-// rewrites constantly. Keeping them apart stops a cache write from clobbering a
-// just-clicked rating: the two no longer share a whole-blob overwrite, and the
-// cross-tab listener only watches hn_state. See migrateCacheKeySplit in state.js.
+// writes to it are rare. hn_cache holds the churny re-fetchable caches (user/
+// item digests) that the page-load fetch storm rewrites constantly. hn_seen
+// holds the visit/watch state (read-comment baselines, comment and story
+// watches) — written a handful of times per page view. Keeping each apart
+// stops a whole-blob write to one from clobbering the others: a stale-snapshot
+// storm write used to roll back a just-clicked rating (fixed by hn_state) and
+// later a just-fetched watch recheck (fixed by hn_seen). The cross-tab
+// listener only watches hn_state. See migrateCacheKeySplit and
+// migrateSeenKeySplit in state.js.
 export const STATE_KEY = "hn_state";
 export const CACHE_KEY = "hn_cache";
+export const SEEN_KEY = "hn_seen";
 export const STATE_SCHEMA_VERSION = 2;
 
 // Pre-0.4 storage layout. Migration reads these on first run; after that the

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CACHE_KEY, STATE_KEY } from "../src/config.js";
+import { SEEN_KEY, STATE_KEY } from "../src/config.js";
 import { parseCommentCount } from "../src/parsing.js";
 import { createStore, parseImport, stateToExport } from "../src/state.js";
 
-// Story-level watches live in hn_cache alongside watchedComments. The
+// Story-level watches live in hn_seen alongside watchedComments. The
 // listing flag is derived by comparing the count HN renders now against
 // the `seenCount` captured on the last item-page visit — so the parse of
 // HN's "N comments" link text is the one piece of real logic here.
@@ -60,11 +60,11 @@ test("store: setStoryWatch persists seenCount + timestamp and round-trips", () =
 	});
 });
 
-test("store: story watches are written to hn_cache, not hn_state", () => {
+test("store: story watches are written to hn_seen, not hn_state", () => {
 	const backend = makeFakeBackend();
 	const store = createStore(backend);
 	store.setStoryWatch("42", 5, 1000);
-	assert.ok(backend.data[CACHE_KEY].includes("watchedStories"));
+	assert.ok(backend.data[SEEN_KEY].includes("watchedStories"));
 	// hn_state, if written at all, must not carry the watch.
 	assert.ok(!(backend.data[STATE_KEY] || "").includes("watchedStories"));
 });

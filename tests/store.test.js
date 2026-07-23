@@ -173,7 +173,7 @@ test("store: concurrent setReadComments from two stores both persist", () => {
 	// re-reads disk before mutating, so Tab A's entry is preserved.
 	tabB.setReadComments("48000002", ["b1"], 2000);
 
-	const persisted = JSON.parse(backend.data.hn_cache);
+	const persisted = JSON.parse(backend.data.hn_seen);
 	assert.deepEqual(persisted.readComments, {
 		48000001: { ids: ["a1", "a2"], fetchedAt: 1000 },
 		48000002: { ids: ["b1"], fetchedAt: 2000 },

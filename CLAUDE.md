@@ -38,7 +38,7 @@ Biome warnings are treated as errors: `just biome`/`just lint` and CI both pass 
 
 ```
 src/
-  config.js                  Storage keys (hn_state, hn_cache), schema version, TTL/timeout/threshold constants
+  config.js                  Storage keys (hn_state, hn_cache, hn_seen), schema version, TTL/timeout/threshold constants
   parsing.js                 Pure helpers: timeSince, stripLeadingQuoteMarker, parseTagInput,
                              findCommentRootIndices, splitBackticks,
                              findNewCommentIds, isReadCommentEntryFresh,
@@ -46,7 +46,8 @@ src/
                              linkifySegments, sortStoriesBy, parseCommentCount,
                              shouldAutoCollapseAuthor, parseParentIdFromHref,
                              splitHtmlIntoParagraphs
-  state.js                   createStore, migrateLegacyKeys, parseImport, stateToExport,
+  state.js                   createStore, migrateLegacyKeys, migrateCacheKeySplit,
+                             migrateSeenKeySplit, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState
                              (createStore also exposes the story-watch methods:
                              get/set/removeStoryWatch, getWatchedStories, pruneWatchedStories)
@@ -144,10 +145,11 @@ When adding a helper that's safe under Node, put it in `parsing.js` or `state.js
 
 ### Storage
 
-State is split across two `GM` keys, both declared in `src/config.js`:
+State is split across three `GM` keys, all declared in `src/config.js`:
 
 - **`hn_state`** (`STATE_KEY`) — the user's curated data, written only on explicit edits (rate, tag, recolour, import), so cross-tab writes to it are rare.
-- **`hn_cache`** (`CACHE_KEY`) — the churny background caches the page-load fetch storm rewrites constantly.
+- **`hn_cache`** (`CACHE_KEY`) — the churny re-fetchable caches the page-load fetch storm rewrites constantly.
+- **`hn_seen`** (`SEEN_KEY`) — the visit/watch state ("what has the user seen"), written a handful of times per page view.
 
 ```
 hn_state: { schemaVersion: 2,
@@ -156,20 +158,23 @@ hn_state: { schemaVersion: 2,
             colors:  { <tagName>: { bgColor, textColor } } }
 
 hn_cache: { cache:           { <user>: { created, karma, about, fetchedAt } },
-            itemCache:       { <itemId>: { title, ..., kids, fetchedAt } },
-            readComments:    { <itemId>: { ids: [...], fetchedAt } },
+            itemCache:       { <itemId>: { title, ..., kids, fetchedAt } } }
+
+hn_seen:  { readComments:    { <itemId>: { ids: [...], fetchedAt } },
             watchedComments: { <commentId>: { itemId, seenKids, latestKids, lastCheckedAt, addedAt } },
             watchedStories:  { <itemId>: { seenCount, fetchedAt } } }
 ```
-Callers never touch `GM_setValue`/`GM_getValue` directly — they go through the `store` object returned by `createStore(backend)` in `src/state.js`, where `backend` is the `{ get, set, list }` adapter that `src/main.js` builds around the `GM_*` APIs. The store reads both keys once and merges them into one in-memory snapshot, so every getter still reads `load().<field>` regardless of which key a field lives on.
+Callers never touch `GM_setValue`/`GM_getValue` directly — they go through the `store` object returned by `createStore(backend)` in `src/state.js`, where `backend` is the `{ get, set, list }` adapter that `src/main.js` builds around the `GM_*` APIs. The store reads all three keys once and merges them into one in-memory snapshot, so every getter still reads `load().<field>` regardless of which key a field lives on.
 
-**Why two keys.** Everything used to live under `hn_state`, written by whole-blob overwrite. On every comment-page load `renderAllUsernames` fires a `fetchUser` per visible username, and each uncached resolve calls `setCachedUser` — one full-blob write plus one cross-tab broadcast. Open several comment tabs at once (the cmd-click-from-the-frontpage pattern) and that's a storm of writes flying between tabs for the first minute or two. Because a tab's `GM_getValue` only reflects another tab's write *after* an async `GM_addValueChangeListener` delivery, read-modify-write does **not** serialize writes across tabs: a cache write computed from a snapshot that predates your rating click could overwrite that rating — both on disk and, via `_applyRemoteChange`, in the clicking tab's in-memory snapshot — so a freshly-set rating silently failed to stick until the storm subsided. Splitting the keys removes the shared writer: `hn_state` is now touched only by rare user edits, the lost-update window for curated data is gone, and the cross-tab listener (below) only watches `hn_state`.
+**Why separate keys.** Everything used to live under `hn_state`, written by whole-blob overwrite. On every comment-page load `renderAllUsernames` fires a `fetchUser` per visible username, and each uncached resolve calls `setCachedUser` — one full-blob write plus one cross-tab broadcast. Open several comment tabs at once (the cmd-click-from-the-frontpage pattern) and that's a storm of writes flying between tabs for the first minute or two. Because a tab's `GM_getValue` only reflects another tab's write *after* an async `GM_addValueChangeListener` delivery, read-modify-write does **not** serialize writes across tabs: a cache write computed from a snapshot that predates your rating click could overwrite that rating — both on disk and, via `_applyRemoteChange`, in the clicking tab's in-memory snapshot — so a freshly-set rating silently failed to stick until the storm subsided. Splitting the keys removes the shared writer: `hn_state` is now touched only by rare user edits, the lost-update window for curated data is gone, and the cross-tab listener (below) only watches `hn_state`.
 
-RMW is still used per key — `mutateUser` (RMW `hn_state`) and `mutateCache` (RMW `hn_cache`) in `createStore` each re-read their key off disk before writing and refresh only the slice they own, leaving the other slice intact. That absorbs *same-tab* sequential races; cross-tab safety for curated data now comes from the key separation, not from RMW.
+**Why a third key.** The 0.11 split left the visit/watch state (`readComments`, `watchedComments`, `watchedStories`) sharing `hn_cache` with the fetch storm, and the same lost-update mechanism bit again: a listing tab's `updateWatchKids` recheck (the write that flags "this watched comment has new replies") could be rolled back by a stale-snapshot `setCachedUser` from another tab still mid-storm. The observed symptom was a listing-page ★ pointing at a watch whose new-reply flag had been silently reverted, so the item page showed no watch-nav buttons. Moving those fields to `hn_seen` gives them the same protection ratings got: the storm writes only `hn_cache`, and nothing that writes hundreds of times per page load shares a key with state that must stick.
 
-Every map in `hn_cache` that grows with use is swept on a TTL so it can't grow without bound: `readComments` and `watchedComments` via `store.pruneReadComments`/`pruneWatchedComments` (read-comment and watch entries), and the `cache`/`itemCache` user/item digests via `store.pruneCaches(now, USER_CACHE_TTL_MS, ITEM_CACHE_TTL_MS)`, called once per page load in `main.js`. The digest caches are TTL-checked on read but were otherwise never pruned, so a one-off hover used to linger in storage forever; `pruneCaches` drops anything past its read-TTL. The pure sweepers (`pruneExpiredReadComments`, `pruneExpiredWatches`, `pruneExpiredByFetchedAt`) live in `src/parsing.js`. Relatedly, `setRating(user, 0)` and `setUserTags(user, [])` delete the key rather than persisting a neutral `0` / empty-array entry, so resetting a user's state doesn't leave a residue behind (shared tag *colours* are left in place — another user may still carry the tag).
+RMW is still used per key — `mutateUser` (RMW `hn_state`), `mutateCache` (RMW `hn_cache`), and `mutateSeen` (RMW `hn_seen`) in `createStore` each re-read their key off disk before writing and refresh only the slice they own, leaving the other slices intact. That absorbs *same-tab* sequential races; cross-tab safety for curated data and visit/watch state now comes from the key separation, not from RMW.
 
-On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`hn_author_rating_*`, `hn_custom_tags_*`, `hn_custom_tag_color_*`) into the consolidated format. Legacy keys are left in place for one version as a rollback safety net. Then `migrateCacheKeySplit(backend)` moves the cache fields out of a pre-split monolithic `hn_state` into `hn_cache`. It's deliberately additive — `hn_state` is left intact (its now-duplicated cache fields are dropped the next time a user-data write rewrites it from its user-only slice), which keeps the migration safe to race across the several tabs a user opens at once: `hn_state` stays monolithic until a human edits a rating/tag, so every concurrent run copies the same populated cache slice and none can clobber a written `hn_cache` with an empty one. Both migrations are idempotent and no-op once done.
+Every map in `hn_seen` and `hn_cache` that grows with use is swept on a TTL so it can't grow without bound: `readComments` and `watchedComments` via `store.pruneReadComments`/`pruneWatchedComments` (read-comment and watch entries), and the `cache`/`itemCache` user/item digests via `store.pruneCaches(now, USER_CACHE_TTL_MS, ITEM_CACHE_TTL_MS)`, called once per page load in `main.js`. The digest caches are TTL-checked on read but were otherwise never pruned, so a one-off hover used to linger in storage forever; `pruneCaches` drops anything past its read-TTL. The pure sweepers (`pruneExpiredReadComments`, `pruneExpiredWatches`, `pruneExpiredByFetchedAt`) live in `src/parsing.js`. Relatedly, `setRating(user, 0)` and `setUserTags(user, [])` delete the key rather than persisting a neutral `0` / empty-array entry, so resetting a user's state doesn't leave a residue behind (shared tag *colours* are left in place — another user may still carry the tag).
+
+On first run, `migrateLegacyKeys(backend)` rewrites the pre-0.4 per-user keys (`hn_author_rating_*`, `hn_custom_tags_*`, `hn_custom_tag_color_*`) into the consolidated format. Legacy keys are left in place for one version as a rollback safety net. Then `migrateCacheKeySplit(backend)` moves the cache fields out of a pre-split monolithic `hn_state` into `hn_cache`. It's deliberately additive — `hn_state` is left intact (its now-duplicated cache fields are dropped the next time a user-data write rewrites it from its user-only slice), which keeps the migration safe to race across the several tabs a user opens at once: `hn_state` stays monolithic until a human edits a rating/tag, so every concurrent run copies the same populated cache slice and none can clobber a written `hn_cache` with an empty one. Finally `migrateSeenKeySplit(backend)` lifts the visit/watch fields out of a 0.11-layout `hn_cache` into `hn_seen`, additive in the same way (`hn_cache` keeps its duplicated copies until the next cache write rewrites it from the narrowed slice). All three migrations are idempotent and no-op once done.
 
 ### Site-wide passes (`src/features/legibility.js`)
 
@@ -228,7 +233,7 @@ Tag/rating mutations sync across all comments by the same user on the page. Inje
 
 Cross-tab sync (in `src/main.js`) uses `GM_addValueChangeListener` on `STATE_KEY` only. When another tab writes to `hn_state`, the listener fires with `remote === true` and hands the old and new raw blobs to `store._applyRemoteChange(oldVal, newVal)`, which refreshes the user slice of the in-memory snapshot (so later reads see the write without a backend round-trip), preserves the cache slice, and returns the set of users whose tag/rating UI is affected, computed by the pure `affectedUsersByStateChange` (in `src/state.js`). The listener is guarded behind a `typeof` check so the script degrades gracefully if the API is unavailable.
 
-Since the split, the background-cache writers (`setCachedUser`, `setCachedItem`, `updateWatchKids`, `setReadComments`) all target `hn_cache`, which has **no** value-change listener — so the page-load fetch storm no longer broadcasts to other tabs at all (and, more importantly, can never roll back a rating). The `STATE_KEY` listener fires only for genuine user-data writes, and `affectedUsersByStateChange` still scopes the re-render: it diffs the old/new `hn_state` blobs and flags a user only when their rating changed, their tag list changed (order included), or a tag colour they carry changed, so a write that touches one user — or many, like a tag-manager Save or an import — re-renders exactly those. For the users that do change, the focus guard still applies: `rerenderUserTags(username)` skips the focused `.hn-tag-input` and every `.hn-tag-group` for that user when one of its inputs has focus, so a remote write can't clobber in-progress typing. Both rerender paths first call `materializeLazyTriggers(username)`, which (once `hasUserState` is true) promotes any of that user's comments still showing the `+` trigger to full controls — this is how a tag added on one comment, or in another tab, becomes visible on the user's other comments.
+Since the splits, the background writers target `hn_cache` (`setCachedUser`, `setCachedItem`) or `hn_seen` (`updateWatchKids`, `markWatchSeen`, `setReadComments`, the story-watch writers) — neither key has a value-change listener, so the page-load fetch storm no longer broadcasts to other tabs at all (and, more importantly, can never roll back a rating or a watch recheck). The `STATE_KEY` listener fires only for genuine user-data writes, and `affectedUsersByStateChange` still scopes the re-render: it diffs the old/new `hn_state` blobs and flags a user only when their rating changed, their tag list changed (order included), or a tag colour they carry changed, so a write that touches one user — or many, like a tag-manager Save or an import — re-renders exactly those. For the users that do change, the focus guard still applies: `rerenderUserTags(username)` skips the focused `.hn-tag-input` and every `.hn-tag-group` for that user when one of its inputs has focus, so a remote write can't clobber in-progress typing. Both rerender paths first call `materializeLazyTriggers(username)`, which (once `hasUserState` is true) promotes any of that user's comments still showing the `+` trigger to full controls — this is how a tag added on one comment, or in another tab, becomes visible on the user's other comments.
 
 When a remote `hn_state` write that actually changed a tag, rating, or colour arrives while the tag-management overlay is open, the listener also calls `tagManager.getActive()?.markStale()` (an empty-diff write — e.g. the post-migration trim of cache fields from `hn_state` — returns before this). The overlay disables Save, shows a "changed in another tab" marker in its header, and blocks a dirty save with an alert — so the user can't silently overwrite newer data with a stale draft. They have to close and reopen the overlay to pick up the new state.
 
@@ -242,7 +247,7 @@ Each overlay row is keyed by the tag's name as it was when the overlay opened. P
 
 Exposed as a factory: `createToolbar({ store })` → `{ mount }`. `mount()` builds a small draggable bar in the top-right with Save state / Restore state buttons.
 
-Export format extends the v0.3 shape with `watches` and `storyWatches` slots, but is otherwise backward compatible: `{ customTags, users, watches, storyWatches }`. Old backups without either slot import as before with empty maps. `stateToExport(state)` (in `src/state.js`) produces it from a snapshot of the store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import calls `store.replaceAll(parsed)` (one write to `hn_state`, one to `hn_cache`) and reloads.
+Export format extends the v0.3 shape with `watches` and `storyWatches` slots, but is otherwise backward compatible: `{ customTags, users, watches, storyWatches }`. Old backups without either slot import as before with empty maps. `stateToExport(state)` (in `src/state.js`) produces it from a snapshot of the store; `parseImport(raw)` accepts both the normalized format and the legacy flat-key dump. Import calls `store.replaceAll(parsed)` (one write each to `hn_state`, `hn_cache`, and `hn_seen`) and reloads.
 
 ### Watch-for-replies (`src/features/watch-toggles.js`, `watched-comment-nav.js`, `watched-listing-highlights.js`)
 
@@ -258,7 +263,7 @@ The toolbar gains two extra buttons (`↑ watch`, `watch ↓`) when at least one
 
 ### Watch-whole-story (`src/features/story-watch-toggle.js`, `watched-story-highlights.js`)
 
-A per-*story* companion that flags whole threads with new comments on the listings, rather than replies to one subtree. It is deliberately lighter than the per-comment watch: the state is just `watchedStories[itemId] = { seenCount, fetchedAt }` (in `hn_cache`), and there is **no** background API recheck — HN renders the total comment count on both the item-page fatitem and every listing row, so `parseCommentCount` reads it off the DOM and the two surfaces compare integers.
+A per-*story* companion that flags whole threads with new comments on the listings, rather than replies to one subtree. It is deliberately lighter than the per-comment watch: the state is just `watchedStories[itemId] = { seenCount, fetchedAt }` (in `hn_seen`), and there is **no** background API recheck — HN renders the total comment count on both the item-page fatitem and every listing row, so `parseCommentCount` reads it off the DOM and the two surfaces compare integers.
 
 `setupStoryWatchToggle` (item pages) reads the fatitem's "n comments" count, adds a 👁 to the subtext (reusing `.hn-watch-icon`), and on click persists or removes the watch, seeding `seenCount` with the count shown now. On load, a story that is already watched has its `seenCount` refreshed to the current count and its `fetchedAt` stamped — the "visiting the thread clears the flag" step and the story analogue of `markWatchSeen`, likewise gated through `runWhenPageVisible` so a background-tab load doesn't clear the flag. Non-watched stories are never auto-tracked; this is strictly opt-in.
 
@@ -272,7 +277,7 @@ Lifecycle mirrors the comment watch: persists until toggled off, swept by a 14-d
 
 1. `GM_addStyle(STYLES)` injects all CSS.
 2. Builds the `{ get, set, list }` backend adapter around `GM_getValue`/`GM_setValue`/`GM_listValues`.
-3. `migrateLegacyKeys(backend)` then `createStore(backend)`.
+3. `migrateLegacyKeys(backend)`, `migrateCacheKeySplit(backend)`, `migrateSeenKeySplit(backend)`, then `createStore(backend)`.
 4. `createApi({ store })` for `fetchUser`.
 5. `createTagManager` and `createUserRender` are constructed with mutual references (each closes over a getter for the other; both bindings exist by the time either's stored callback runs on a click).
 6. `createToolbar({ store, backend })` for export/import.

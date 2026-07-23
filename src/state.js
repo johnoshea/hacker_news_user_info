@@ -7,6 +7,7 @@ import {
 	LEGACY_COLOR_PREFIX,
 	LEGACY_RATING_PREFIX,
 	LEGACY_TAGS_PREFIX,
+	SEEN_KEY,
 	STATE_KEY,
 	STATE_SCHEMA_VERSION,
 } from "./config.js";
@@ -30,17 +31,13 @@ export function emptyState() {
 	};
 }
 
-// The user-data slice (hn_state) and the cache slice (hn_cache). Splitting the
-// fields across two keys is what keeps a cache write from rewriting the blob
-// that carries ratings/tags — see CACHE_KEY in config.js.
+// The user-data slice (hn_state), the re-fetchable cache slice (hn_cache) and
+// the visit/watch slice (hn_seen). Splitting the fields across keys is what
+// keeps a whole-blob write to one slice from rewriting the others — see the
+// key comment in config.js.
 const USER_FIELDS = ["schemaVersion", "ratings", "tags", "colors"];
-const CACHE_FIELDS = [
-	"cache",
-	"itemCache",
-	"readComments",
-	"watchedComments",
-	"watchedStories",
-];
+const CACHE_FIELDS = ["cache", "itemCache"];
+const SEEN_FIELDS = ["readComments", "watchedComments", "watchedStories"];
 
 function emptyUser() {
 	return {
@@ -54,6 +51,10 @@ function emptyCache() {
 	return {
 		cache: {},
 		itemCache: {},
+	};
+}
+function emptySeen() {
+	return {
 		readComments: {},
 		watchedComments: {},
 		watchedStories: {},
@@ -100,10 +101,16 @@ export function createStore(backend) {
 		sliceFrom(backend.get(STATE_KEY), USER_FIELDS, emptyUser());
 	const readCache = () =>
 		sliceFrom(backend.get(CACHE_KEY), CACHE_FIELDS, emptyCache());
+	// hn_seen is authoritative for the seen fields; migrateSeenKeySplit
+	// (run before createStore) has already lifted any copies out of
+	// hn_cache, so the duplicates the additive migration leaves there are
+	// never read. A missing hn_seen (fresh install) yields clean defaults.
+	const readSeen = () =>
+		sliceFrom(backend.get(SEEN_KEY), SEEN_FIELDS, emptySeen());
 
 	const load = () => {
 		if (state !== null) return state;
-		state = { ...readUser(), ...readCache() };
+		state = { ...readUser(), ...readCache(), ...readSeen() };
 		return state;
 	};
 
@@ -122,6 +129,7 @@ export function createStore(backend) {
 	};
 	const mutateUser = (mutator) => mutateKey(STATE_KEY, readUser, mutator);
 	const mutateCache = (mutator) => mutateKey(CACHE_KEY, readCache, mutator);
+	const mutateSeen = (mutator) => mutateKey(SEEN_KEY, readSeen, mutator);
 
 	const hydrateTag = (tagName) => {
 		const color = load().colors[tagName] || {
@@ -262,7 +270,7 @@ export function createStore(backend) {
 		// (We replace, since a comment that's no longer on the page must
 		// have been deleted/flagged, and there's no value in tracking it.)
 		setReadComments(itemId, ids, nowMs) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				s.readComments[itemId] = { ids: ids.slice(), fetchedAt: nowMs };
 			});
 		},
@@ -270,7 +278,7 @@ export function createStore(backend) {
 		// item-page load so a user who reads-then-never-revisits doesn't
 		// accumulate dead entries forever.
 		pruneReadComments(nowMs, ttlMs) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				const before = s.readComments;
 				const after = pruneExpiredReadComments(before, nowMs, ttlMs);
 				if (Object.keys(after).length === Object.keys(before).length) {
@@ -293,7 +301,7 @@ export function createStore(backend) {
 			return map[commentId] || null;
 		},
 		setWatchedComment(commentId, entry) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				s.watchedComments[commentId] = {
 					itemId: entry.itemId,
 					seenKids: (entry.seenKids || []).slice(),
@@ -304,7 +312,7 @@ export function createStore(backend) {
 			});
 		},
 		removeWatchedComment(commentId) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				if (!s.watchedComments?.[commentId]) return false;
 				delete s.watchedComments[commentId];
 			});
@@ -313,7 +321,7 @@ export function createStore(backend) {
 		// most recent API check returned. Called when the user lands on
 		// the item page where a watched comment is rendered.
 		markWatchSeen(commentId, _nowMs) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				const e = s.watchedComments?.[commentId];
 				if (!e) return false;
 				e.seenKids = (e.latestKids || []).slice();
@@ -324,7 +332,7 @@ export function createStore(backend) {
 		// "what's new since I last looked" notion until the user visits
 		// the item page.
 		updateWatchKids(commentId, kids, nowMs) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				const e = s.watchedComments?.[commentId];
 				if (!e) return false;
 				e.latestKids = (kids || []).slice();
@@ -334,7 +342,7 @@ export function createStore(backend) {
 		// Drop expired entries from the watchedComments map. Run periodically
 		// so a watch that hasn't been checked in >14 days is cleaned up.
 		pruneWatchedComments(nowMs, ttlMs) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				const before = s.watchedComments || {};
 				const after = pruneExpiredWatches(before, nowMs, ttlMs);
 				if (Object.keys(after).length === Object.keys(before).length) {
@@ -357,13 +365,13 @@ export function createStore(backend) {
 			return map[itemId] || null;
 		},
 		setStoryWatch(itemId, seenCount, nowMs) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				if (!s.watchedStories) s.watchedStories = {};
 				s.watchedStories[itemId] = { seenCount, fetchedAt: nowMs };
 			});
 		},
 		removeStoryWatch(itemId) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				if (!s.watchedStories?.[itemId]) return false;
 				delete s.watchedStories[itemId];
 			});
@@ -372,7 +380,7 @@ export function createStore(backend) {
 		// (last visit), so a thread you keep opening stays watched and a
 		// cold one is swept. Reuses the fetchedAt-based sweeper.
 		pruneWatchedStories(nowMs, ttlMs) {
-			mutateCache((s) => {
+			mutateSeen((s) => {
 				const before = s.watchedStories || {};
 				const after = pruneExpiredByFetchedAt(before, nowMs, ttlMs);
 				if (Object.keys(after).length === Object.keys(before).length) {
@@ -388,7 +396,8 @@ export function createStore(backend) {
 			});
 		},
 		// Wholesale replace of every slice — the import path. User data lands
-		// in hn_state, caches/watches in hn_cache, one write each.
+		// in hn_state, caches in hn_cache, visit/watch state in hn_seen, one
+		// write each.
 		replaceAll(s) {
 			mutateUser((u) => {
 				u.schemaVersion = STATE_SCHEMA_VERSION;
@@ -399,9 +408,11 @@ export function createStore(backend) {
 			mutateCache((c) => {
 				c.cache = s.cache || {};
 				c.itemCache = s.itemCache || {};
-				c.readComments = s.readComments || {};
-				c.watchedComments = s.watchedComments || {};
-				c.watchedStories = s.watchedStories || {};
+			});
+			mutateSeen((v) => {
+				v.readComments = s.readComments || {};
+				v.watchedComments = s.watchedComments || {};
+				v.watchedStories = s.watchedStories || {};
 			});
 		},
 		// Expose raw state for export and for callers that need to iterate.
@@ -531,6 +542,40 @@ export function migrateCacheKeySplit(backend) {
 		JSON.stringify({
 			cache: parsed.cache || {},
 			itemCache: parsed.itemCache || {},
+			readComments: parsed.readComments || {},
+			watchedComments: parsed.watchedComments || {},
+			watchedStories: parsed.watchedStories || {},
+		}),
+	);
+}
+
+// Migrate the 0.11 two-key layout to three keys: lift the visit/watch fields
+// (readComments, watchedComments, watchedStories) out of hn_cache into the new
+// hn_seen key. Those fields are "what has the user seen" state, but they were
+// left sharing hn_cache with the page-load fetch storm — hundreds of
+// setCachedUser RMW writes per comment-page load — and GM value propagation
+// across tabs is async, so a storm write computed from a stale snapshot could
+// roll back a just-written watch recheck and silently consume its "new
+// replies" flag. Additive like migrateCacheKeySplit: hn_cache is left intact
+// (its now-duplicated seen fields are dropped by the next cache write, which
+// rewrites the key from the narrowed slice), so concurrent tabs racing this
+// migration all copy the same populated fields and none can clobber a written
+// hn_seen with an empty one. Idempotent: no-op once hn_seen exists. Runs after
+// migrateCacheKeySplit (which may have just created hn_cache).
+export function migrateSeenKeySplit(backend) {
+	if (backend.get(SEEN_KEY) !== undefined) return;
+	const raw = backend.get(CACHE_KEY);
+	if (raw === undefined) return;
+	let parsed;
+	try {
+		parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+	} catch (_err) {
+		return;
+	}
+	if (!parsed || typeof parsed !== "object") return;
+	backend.set(
+		SEEN_KEY,
+		JSON.stringify({
 			readComments: parsed.readComments || {},
 			watchedComments: parsed.watchedComments || {},
 			watchedStories: parsed.watchedStories || {},

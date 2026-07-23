@@ -32,6 +32,7 @@ import {
 	createStore,
 	migrateCacheKeySplit,
 	migrateLegacyKeys,
+	migrateSeenKeySplit,
 } from "./state.js";
 import { STYLES } from "./styles.js";
 
@@ -49,6 +50,9 @@ migrateLegacyKeys(backend);
 // Split the pre-0.11 single-key layout: move the background caches off the
 // user-data key so a cache write can't clobber a rating. No-op once migrated.
 migrateCacheKeySplit(backend);
+// Split the 0.11 layout further: move the visit/watch state off the cache key
+// so the fetch storm can't roll back a watch recheck. No-op once migrated.
+migrateSeenKeySplit(backend);
 const store = createStore(backend);
 // Sweep expired user/item digests once per load — they're TTL-checked on
 // read but otherwise never pruned, so stale keys would accumulate in storage.
