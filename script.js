@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+a607439
+// @version      0.11+d60ef90
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -162,6 +162,60 @@ function findCommentRootIndices(indentLevels) {
 		}
 	}
 	return out;
+}
+
+// For an item page's comment list (top-down DOM order, with a parallel
+// "was this comment absent last visit" flag), decide what the
+// collapse-seen mode should do to each row. Returns
+// { stubs, collapsed } where `stubs` lists the indices to reduce to a
+// header-only row, and `collapsed` lists { root, descendants } pairs
+// whose root becomes a stub carrying an "[N hidden]" expander and whose
+// descendants are hidden outright. Any index in neither list renders
+// untouched.
+//
+// A row is left untouched when it is new, or sits under one: a reply
+// cannot predate its parent, so everything below a new comment is new
+// too. (If HN ever violates that, those rows just render in full — the
+// failure mode is showing too much, not a broken page.)
+function planSeenCollapse(indentLevels, isNew) {
+	const stubs = [];
+	const collapsed = [];
+	let i = 0;
+	while (i < indentLevels.length) {
+		// The subtree of `i` is the run of following rows indented deeper
+		// than it, ending at the next row at its own level or shallower.
+		let end = i + 1;
+		while (end < indentLevels.length && indentLevels[end] > indentLevels[i]) {
+			end++;
+		}
+
+		if (isNew[i]) {
+			i = end;
+			continue;
+		}
+
+		const descendants = [];
+		let subtreeHasNew = false;
+		for (let j = i + 1; j < end; j++) {
+			descendants.push(j);
+			if (isNew[j]) subtreeHasNew = true;
+		}
+
+		if (subtreeHasNew) {
+			// Keep this row on the page as a stub so the lineage down to the
+			// new comment reads normally, and plan its children in turn.
+			stubs.push(i);
+			i += 1;
+		} else if (descendants.length === 0) {
+			// Nothing to hide behind an expander — "[0 hidden]" would be a lie.
+			stubs.push(i);
+			i = end;
+		} else {
+			collapsed.push({ root: i, descendants });
+			i = end;
+		}
+	}
+	return { stubs, collapsed };
 }
 
 // Split a string into alternating { kind: "text" } and { kind: "code" }
@@ -1394,6 +1448,17 @@ function getItemPageId() {
 	return params.get("id") || null;
 }
 
+// HN renders a comment's indentation as an <img> in td.ind whose width is
+// `40 * level` pixels; there is no other marker of reply depth in the
+// markup. Several passes need to reconstruct the tree from that, so the
+// reading lives here rather than being spelled out in each of them.
+function commentIndentLevel(row) {
+	const img = row.querySelector("td.ind img");
+	if (!img) return 0;
+	const width = Number(img.getAttribute("width")) || img.width || 0;
+	return Math.round(width / 40);
+}
+
 // Run fn immediately if the tab is visible, otherwise the first time it
 // becomes visible. Userscripts run at load even in background tabs
 // (cmd-click a story, never switch to it), so any write meaning "the
@@ -2059,22 +2124,19 @@ const STYLES = `
       color: var(--colour-hn-orange);
     }
 
-    /* Auto-collapse: when an author's stored rating is <= the
-       LOW_SCORE_COLLAPSE_THRESHOLD, the row is tagged .hn-low-score and
-       the body + reply link are hidden. The comhead and the
-       user-render main row stay visible (so the rating buttons remain
-       reachable), and replies — which are separate tr.comtr rows —
-       are unaffected. Clicking the indent gutter toggles
-       .hn-low-score-expanded, which uses display: revert to undo the
-       hide on this single row. */
-    tr.comtr.hn-low-score .commtext,
-    tr.comtr.hn-low-score .reply {
+    /* Two features hide a single comment's body while leaving its replies
+       alone: auto-collapse (author rated <= LOW_SCORE_COLLAPSE_THRESHOLD,
+       tagged .hn-low-score) and the collapse-seen mode (already-read
+       comment, tagged .hn-seen-stub). Either way the comhead and the
+       user-render main row stay visible, so the rating buttons remain
+       reachable and you can still see who wrote it. Clicking the indent
+       gutter toggles the shared .hn-body-expanded marker to reveal that
+       one body. */
+    tr.comtr.hn-low-score:not(.hn-body-expanded) .commtext,
+    tr.comtr.hn-low-score:not(.hn-body-expanded) .reply,
+    tr.comtr.hn-seen-stub:not(.hn-body-expanded) .commtext,
+    tr.comtr.hn-seen-stub:not(.hn-body-expanded) .reply {
       display: none;
-    }
-
-    tr.comtr.hn-low-score.hn-low-score-expanded .commtext,
-    tr.comtr.hn-low-score.hn-low-score-expanded .reply {
-      display: revert;
     }
 
     /* "[low score]" marker appended to the comhead next to the existing
@@ -2084,6 +2146,36 @@ const STYLES = `
       color: #999;
       margin-left: 4px;
       font-size: 0.9em;
+    }
+
+    /* Collapse-seen mode. Rows of a subtree with nothing new in it go
+       entirely; their root keeps its stub and reveals the "[N hidden]"
+       expander, which is built at load and stays out of the way until the
+       mode is switched on. */
+    tr.comtr.hn-seen-hidden {
+      display: none;
+    }
+    a.hn-seen-expander {
+      display: none;
+    }
+    tr.comtr.hn-seen-collapsed a.hn-seen-expander {
+      display: inline;
+    }
+
+    /* "collapse seen (N new)" sits in the fatitem subtext alongside
+       "toggle all". It and the per-subtree expander take the same
+       orange/underline treatment as every other link we inject. */
+    a.hn-seen-expander:link,
+    a.hn-seen-expander:visited,
+    a.hn-collapse-seen,
+    a.hn-collapse-seen:link,
+    a.hn-collapse-seen:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-seen-expander:hover,
+    a.hn-collapse-seen:hover {
+      text-decoration: underline;
     }
   `;
 
@@ -2310,13 +2402,18 @@ function setupCommentBoxToggle() {
 
 // ===== src/features/click-indent-toggle.js =====
 
-// Make the empty indent column on each comment a click target.
-// Default behaviour: fire HN's native toggle (collapse/expand the
-// whole subtree). Overridden behaviour: on rows tagged
-// .hn-low-score (auto-collapsed because the author's rating is at
-// or below the configured threshold), toggle .hn-low-score-expanded
-// instead — score-collapse hides only this comment's body, not its
-// replies, so HN's native subtree toggle would do the wrong thing.
+// Make the empty indent column on each comment a click target. This is
+// the one router for gutter clicks, so it dispatches on whichever of our
+// own collapse states the row is in before falling back to HN's native
+// toggle:
+//
+//   .hn-seen-collapsed  the row stands in for a hidden subtree, so the
+//                       click goes to its "[N hidden]" expander and the
+//                       reveal logic stays in collapse-seen-comments.
+//   .hn-low-score /     only this comment's body is hidden, not its
+//   .hn-seen-stub       replies, so firing HN's subtree toggle would do
+//                       the wrong thing — reveal the body instead.
+//   anything else       HN's native a.togg, unchanged.
 function setupClickIndentToggle() {
 	for (const row of document.querySelectorAll("tr.comtr")) {
 		const indentCell = row.querySelector("td.ind");
@@ -2324,8 +2421,15 @@ function setupClickIndentToggle() {
 		if (!indentCell || !toggleBtn) continue;
 		indentCell.classList.add("hn-clickable-indent");
 		indentCell.addEventListener("click", () => {
-			if (row.classList.contains("hn-low-score")) {
-				row.classList.toggle("hn-low-score-expanded");
+			if (row.classList.contains("hn-seen-collapsed")) {
+				row.querySelector(".hn-seen-expander")?.click();
+				return;
+			}
+			if (
+				row.classList.contains("hn-low-score") ||
+				row.classList.contains("hn-seen-stub")
+			) {
+				row.classList.toggle("hn-body-expanded");
 				return;
 			}
 			toggleBtn.click();
@@ -2345,17 +2449,7 @@ function setupCollapseRootComment() {
 	const comments = Array.from(document.querySelectorAll("tr.comtr"));
 	if (comments.length === 0) return;
 
-	// HN renders indentation as an <img> in td.ind whose width is
-	// `40 * level` pixels. We read that width once per comment to build
-	// the level array, then hand it to the pure helper.
-	const indentLevels = comments.map((row) => {
-		const img = row.querySelector("td.ind img");
-		if (!img) return 0;
-		const width = Number(img.getAttribute("width")) || img.width || 0;
-		return Math.round(width / 40);
-	});
-
-	const rootIndices = findCommentRootIndices(indentLevels);
+	const rootIndices = findCommentRootIndices(comments.map(commentIndentLevel));
 
 	for (let i = 0; i < comments.length; i++) {
 		const rootIdx = rootIndices[i];
@@ -2456,13 +2550,6 @@ function transformBackticksToMonospace() {
 
 
 
-function indentLevel(row) {
-	const img = row.querySelector("td.ind img");
-	if (!img) return 0;
-	const width = Number(img.getAttribute("width")) || img.width || 0;
-	return Math.round(width / 40);
-}
-
 function fireToggle(row) {
 	row.querySelector("a.togg")?.click();
 }
@@ -2471,7 +2558,7 @@ function setupToggleAllComments() {
 	const allRows = Array.from(document.querySelectorAll("tr.comtr"));
 	if (!subtext || allRows.length === 0) return;
 
-	const levels = allRows.map(indentLevel);
+	const levels = allRows.map(commentIndentLevel);
 
 	// Fatitem-level toggle: collect all root rows up front so the click
 	// handler doesn't re-query the DOM on every press.
@@ -2551,9 +2638,13 @@ function getCurrentCommentIds() {
 		.map((row) => row.id)
 		.filter(Boolean);
 }
+
+// Returns the IDs found to be new, so collapse-seen-comments can plan its
+// stubs from the same set rather than re-deriving it by scanning the DOM
+// for the class this pass just added.
 function setupHighlightUnreadComments({ store }) {
 	const itemId = getItemPageId();
-	if (!itemId) return;
+	if (!itemId) return [];
 
 	const now = Date.now();
 
@@ -2562,7 +2653,7 @@ function setupHighlightUnreadComments({ store }) {
 	store.pruneReadComments(now, READ_COMMENTS_TTL_MS);
 
 	const currentIds = getCurrentCommentIds();
-	if (currentIds.length === 0) return;
+	if (currentIds.length === 0) return [];
 
 	const stored = store.getReadComments(itemId);
 	const isFreshSecondVisit =
@@ -2584,6 +2675,90 @@ function setupHighlightUnreadComments({ store }) {
 	runWhenPageVisible(() => {
 		store.setReadComments(itemId, currentIds, Date.now());
 	});
+
+	return newIds;
+}
+
+
+// ===== src/features/collapse-seen-comments.js =====
+
+// "collapse seen" toggle in the fatitem subtext, offered on any thread
+// that has both new comments and old ones to get out of their way.
+//
+// Turning it on reduces every comment you have already read to a
+// header-only stub, and hides whole subtrees that contain nothing new
+// behind an "[N hidden]" expander. What survives at full size is the new
+// comments plus the chain of ancestors leading down to each of them, so a
+// reply still reads in context. Turning it off puts the page back.
+//
+// The mode is off on every load and is not persisted anywhere.
+//
+// Note what this does NOT do: fire HN's own a.togg. HN's toggleCollapse
+// posts collapse?id=... to the server for logged-in users, so bulk-firing
+// it would rewrite your account's collapse state. Rows are hidden with our
+// own classes instead, which also means a comment you collapsed on HN
+// stays collapsed through both halves of this toggle.
+function setupCollapseSeenComments({ newIds }) {
+	const subtext = document.querySelector(".fatitem .subtext");
+	const rows = Array.from(document.querySelectorAll("tr.comtr"));
+	if (!subtext || rows.length === 0 || newIds.length === 0) return;
+
+	const newIdSet = new Set(newIds);
+	const plan = planSeenCollapse(
+		rows.map(commentIndentLevel),
+		rows.map((row) => newIdSet.has(row.id)),
+	);
+	// Every comment on the page is new (or the thread is a single new
+	// comment): there is nothing to collapse, so don't offer the link.
+	if (plan.stubs.length === 0 && plan.collapsed.length === 0) return;
+
+	const stubRows = plan.stubs.map((i) => rows[i]);
+
+	// Resolve each collapsed subtree to live rows once, and give its root
+	// the expander now — CSS keeps that out of sight until the mode is on.
+	const subtrees = plan.collapsed.map(({ root, descendants }) => {
+		const rootRow = rows[root];
+		const hidden = descendants.map((i) => rows[i]);
+		const expander = h("a", {
+			class: "hn-seen-expander",
+			href: "javascript:void(0)",
+			text: `[${hidden.length} hidden]`,
+			onclick: (event) => {
+				event.preventDefault();
+				// A one-way reveal: the subtree rejoins the page in full and
+				// this root stops being managed until the mode is re-applied.
+				rootRow.classList.remove("hn-seen-stub", "hn-seen-collapsed");
+				for (const row of hidden) row.classList.remove("hn-seen-hidden");
+			},
+		});
+		rootRow.querySelector("span.comhead")?.append(expander);
+		return { rootRow, hidden };
+	});
+
+	const label = `collapse seen (${newIds.length} new)`;
+	let active = false;
+
+	const link = h("a", {
+		class: "hn-collapse-seen",
+		href: "javascript:void(0)",
+		text: label,
+		onclick: (event) => {
+			event.preventDefault();
+			active = !active;
+			for (const row of stubRows) row.classList.toggle("hn-seen-stub", active);
+			for (const { rootRow, hidden } of subtrees) {
+				rootRow.classList.toggle("hn-seen-stub", active);
+				rootRow.classList.toggle("hn-seen-collapsed", active);
+				for (const row of hidden)
+					row.classList.toggle("hn-seen-hidden", active);
+			}
+			link.textContent = active ? "show all" : label;
+		},
+	});
+
+	// Match HN's subtext separator pattern: " | <link>".
+	subtext.append(document.createTextNode(" | "));
+	subtext.append(link);
 }
 
 
@@ -3616,8 +3791,11 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 			row.classList.toggle("hn-low-score", collapse);
 			// Any rating change resets the manual-expand state so the row
 			// snaps back to the canonical collapsed/expanded shape derived
-			// from the new rating.
-			row.classList.remove("hn-low-score-expanded");
+			// from the new rating. The marker is shared with the
+			// collapse-seen mode, so this also re-hides a seen-stub you had
+			// opened on one of this user's comments — same intent, the row
+			// goes back to the shape its collapse reasons dictate.
+			row.classList.remove("hn-body-expanded");
 			// Keep the [low score] marker in sync with the collapse class —
 			// a comhead with a "[low score]" tag but a fully-visible body
 			// would be misleading, and a freshly-collapsed row that never
@@ -4836,6 +5014,7 @@ function createToolbar({ store }) {
 
 
 
+
 GM_addStyle(STYLES);
 
 // Adapter from GM_* to the {get, set, list} interface the store and
@@ -4910,7 +5089,11 @@ if (isItemPage()) {
 	setupCollapseRootComment();
 	transformBackticksToMonospace();
 	setupToggleAllComments();
-	setupHighlightUnreadComments({ store });
+	// The unread pass hands its new-comment IDs straight to collapse-seen,
+	// which plans its stubs from the same set rather than re-deriving it.
+	setupCollapseSeenComments({
+		newIds: setupHighlightUnreadComments({ store }),
+	});
 	userRender.renderAllUsernames();
 	setupAutoCollapseLowScore({ store });
 	// toolbar.mount() and setupWatchedCommentNav() must run BEFORE

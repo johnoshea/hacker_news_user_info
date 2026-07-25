@@ -38,6 +38,17 @@ export function getItemPageId() {
 	return params.get("id") || null;
 }
 
+// HN renders a comment's indentation as an <img> in td.ind whose width is
+// `40 * level` pixels; there is no other marker of reply depth in the
+// markup. Several passes need to reconstruct the tree from that, so the
+// reading lives here rather than being spelled out in each of them.
+export function commentIndentLevel(row) {
+	const img = row.querySelector("td.ind img");
+	if (!img) return 0;
+	const width = Number(img.getAttribute("width")) || img.width || 0;
+	return Math.round(width / 40);
+}
+
 // Run fn immediately if the tab is visible, otherwise the first time it
 // becomes visible. Userscripts run at load even in background tabs
 // (cmd-click a story, never switch to it), so any write meaning "the

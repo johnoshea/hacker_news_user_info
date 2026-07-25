@@ -24,9 +24,12 @@ function getCurrentCommentIds() {
 		.filter(Boolean);
 }
 
+// Returns the IDs found to be new, so collapse-seen-comments can plan its
+// stubs from the same set rather than re-deriving it by scanning the DOM
+// for the class this pass just added.
 export function setupHighlightUnreadComments({ store }) {
 	const itemId = getItemPageId();
-	if (!itemId) return;
+	if (!itemId) return [];
 
 	const now = Date.now();
 
@@ -35,7 +38,7 @@ export function setupHighlightUnreadComments({ store }) {
 	store.pruneReadComments(now, READ_COMMENTS_TTL_MS);
 
 	const currentIds = getCurrentCommentIds();
-	if (currentIds.length === 0) return;
+	if (currentIds.length === 0) return [];
 
 	const stored = store.getReadComments(itemId);
 	const isFreshSecondVisit =
@@ -57,4 +60,6 @@ export function setupHighlightUnreadComments({ store }) {
 	runWhenPageVisible(() => {
 		store.setReadComments(itemId, currentIds, Date.now());
 	});
+
+	return newIds;
 }

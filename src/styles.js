@@ -612,22 +612,19 @@ export const STYLES = `
       color: var(--colour-hn-orange);
     }
 
-    /* Auto-collapse: when an author's stored rating is <= the
-       LOW_SCORE_COLLAPSE_THRESHOLD, the row is tagged .hn-low-score and
-       the body + reply link are hidden. The comhead and the
-       user-render main row stay visible (so the rating buttons remain
-       reachable), and replies — which are separate tr.comtr rows —
-       are unaffected. Clicking the indent gutter toggles
-       .hn-low-score-expanded, which uses display: revert to undo the
-       hide on this single row. */
-    tr.comtr.hn-low-score .commtext,
-    tr.comtr.hn-low-score .reply {
+    /* Two features hide a single comment's body while leaving its replies
+       alone: auto-collapse (author rated <= LOW_SCORE_COLLAPSE_THRESHOLD,
+       tagged .hn-low-score) and the collapse-seen mode (already-read
+       comment, tagged .hn-seen-stub). Either way the comhead and the
+       user-render main row stay visible, so the rating buttons remain
+       reachable and you can still see who wrote it. Clicking the indent
+       gutter toggles the shared .hn-body-expanded marker to reveal that
+       one body. */
+    tr.comtr.hn-low-score:not(.hn-body-expanded) .commtext,
+    tr.comtr.hn-low-score:not(.hn-body-expanded) .reply,
+    tr.comtr.hn-seen-stub:not(.hn-body-expanded) .commtext,
+    tr.comtr.hn-seen-stub:not(.hn-body-expanded) .reply {
       display: none;
-    }
-
-    tr.comtr.hn-low-score.hn-low-score-expanded .commtext,
-    tr.comtr.hn-low-score.hn-low-score-expanded .reply {
-      display: revert;
     }
 
     /* "[low score]" marker appended to the comhead next to the existing
@@ -637,5 +634,35 @@ export const STYLES = `
       color: #999;
       margin-left: 4px;
       font-size: 0.9em;
+    }
+
+    /* Collapse-seen mode. Rows of a subtree with nothing new in it go
+       entirely; their root keeps its stub and reveals the "[N hidden]"
+       expander, which is built at load and stays out of the way until the
+       mode is switched on. */
+    tr.comtr.hn-seen-hidden {
+      display: none;
+    }
+    a.hn-seen-expander {
+      display: none;
+    }
+    tr.comtr.hn-seen-collapsed a.hn-seen-expander {
+      display: inline;
+    }
+
+    /* "collapse seen (N new)" sits in the fatitem subtext alongside
+       "toggle all". It and the per-subtree expander take the same
+       orange/underline treatment as every other link we inject. */
+    a.hn-seen-expander:link,
+    a.hn-seen-expander:visited,
+    a.hn-collapse-seen,
+    a.hn-collapse-seen:link,
+    a.hn-collapse-seen:visited {
+      color: var(--colour-hn-orange);
+      margin-left: 4px;
+    }
+    a.hn-seen-expander:hover,
+    a.hn-collapse-seen:hover {
+      text-decoration: underline;
     }
   `;

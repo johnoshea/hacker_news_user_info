@@ -53,6 +53,60 @@ export function findCommentRootIndices(indentLevels) {
 	return out;
 }
 
+// For an item page's comment list (top-down DOM order, with a parallel
+// "was this comment absent last visit" flag), decide what the
+// collapse-seen mode should do to each row. Returns
+// { stubs, collapsed } where `stubs` lists the indices to reduce to a
+// header-only row, and `collapsed` lists { root, descendants } pairs
+// whose root becomes a stub carrying an "[N hidden]" expander and whose
+// descendants are hidden outright. Any index in neither list renders
+// untouched.
+//
+// A row is left untouched when it is new, or sits under one: a reply
+// cannot predate its parent, so everything below a new comment is new
+// too. (If HN ever violates that, those rows just render in full — the
+// failure mode is showing too much, not a broken page.)
+export function planSeenCollapse(indentLevels, isNew) {
+	const stubs = [];
+	const collapsed = [];
+	let i = 0;
+	while (i < indentLevels.length) {
+		// The subtree of `i` is the run of following rows indented deeper
+		// than it, ending at the next row at its own level or shallower.
+		let end = i + 1;
+		while (end < indentLevels.length && indentLevels[end] > indentLevels[i]) {
+			end++;
+		}
+
+		if (isNew[i]) {
+			i = end;
+			continue;
+		}
+
+		const descendants = [];
+		let subtreeHasNew = false;
+		for (let j = i + 1; j < end; j++) {
+			descendants.push(j);
+			if (isNew[j]) subtreeHasNew = true;
+		}
+
+		if (subtreeHasNew) {
+			// Keep this row on the page as a stub so the lineage down to the
+			// new comment reads normally, and plan its children in turn.
+			stubs.push(i);
+			i += 1;
+		} else if (descendants.length === 0) {
+			// Nothing to hide behind an expander — "[0 hidden]" would be a lie.
+			stubs.push(i);
+			i = end;
+		} else {
+			collapsed.push({ root: i, descendants });
+			i = end;
+		}
+	}
+	return { stubs, collapsed };
+}
+
 // Split a string into alternating { kind: "text" } and { kind: "code" }
 // segments based on backtick pairs. Used by the backticks-to-monospace
 // pass to walk text nodes and replace them with DOM nodes that render

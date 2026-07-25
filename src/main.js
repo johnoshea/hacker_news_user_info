@@ -9,6 +9,7 @@ import { setupAutoCollapseLowScore } from "./features/auto-collapse-low-score.js
 import { transformBackticksToMonospace } from "./features/backticks-to-monospace.js";
 import { setupClickIndentToggle } from "./features/click-indent-toggle.js";
 import { setupCollapseRootComment } from "./features/collapse-root-comment.js";
+import { setupCollapseSeenComments } from "./features/collapse-seen-comments.js";
 import { setupCommentBoxToggle } from "./features/comment-box-toggle.js";
 import { setupHighlightUnreadComments } from "./features/highlight-unread-comments.js";
 import { createHoverPopup } from "./features/hover-popup.js";
@@ -110,7 +111,11 @@ if (isItemPage()) {
 	setupCollapseRootComment();
 	transformBackticksToMonospace();
 	setupToggleAllComments();
-	setupHighlightUnreadComments({ store });
+	// The unread pass hands its new-comment IDs straight to collapse-seen,
+	// which plans its stubs from the same set rather than re-deriving it.
+	setupCollapseSeenComments({
+		newIds: setupHighlightUnreadComments({ store }),
+	});
 	userRender.renderAllUsernames();
 	setupAutoCollapseLowScore({ store });
 	// toolbar.mount() and setupWatchedCommentNav() must run BEFORE

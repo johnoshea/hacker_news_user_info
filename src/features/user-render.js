@@ -130,8 +130,11 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 			row.classList.toggle("hn-low-score", collapse);
 			// Any rating change resets the manual-expand state so the row
 			// snaps back to the canonical collapsed/expanded shape derived
-			// from the new rating.
-			row.classList.remove("hn-low-score-expanded");
+			// from the new rating. The marker is shared with the
+			// collapse-seen mode, so this also re-hides a seen-stub you had
+			// opened on one of this user's comments — same intent, the row
+			// goes back to the shape its collapse reasons dictate.
+			row.classList.remove("hn-body-expanded");
 			// Keep the [low score] marker in sync with the collapse class —
 			// a comhead with a "[low score]" tag but a fully-visible body
 			// would be misleading, and a freshly-collapsed row that never

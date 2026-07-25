@@ -4,24 +4,14 @@
 // has descended deep into a thread can dismiss the whole subtree
 // without losing their place in the page.
 
-import { h } from "../dom.js";
+import { commentIndentLevel, h } from "../dom.js";
 import { findCommentRootIndices } from "../parsing.js";
 
 export function setupCollapseRootComment() {
 	const comments = Array.from(document.querySelectorAll("tr.comtr"));
 	if (comments.length === 0) return;
 
-	// HN renders indentation as an <img> in td.ind whose width is
-	// `40 * level` pixels. We read that width once per comment to build
-	// the level array, then hand it to the pure helper.
-	const indentLevels = comments.map((row) => {
-		const img = row.querySelector("td.ind img");
-		if (!img) return 0;
-		const width = Number(img.getAttribute("width")) || img.width || 0;
-		return Math.round(width / 40);
-	});
-
-	const rootIndices = findCommentRootIndices(indentLevels);
+	const rootIndices = findCommentRootIndices(comments.map(commentIndentLevel));
 
 	for (let i = 0; i < comments.length; i++) {
 		const rootIdx = rootIndices[i];
