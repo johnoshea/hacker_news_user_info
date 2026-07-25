@@ -15,13 +15,13 @@
 // own classes instead, which also means a comment you collapsed on HN
 // stays collapsed through both halves of this toggle.
 
-import { commentIndentLevel, h } from "../dom.js";
+import { commentIndentLevel, getFatitemSubline, h } from "../dom.js";
 import { planSeenCollapse } from "../parsing.js";
 
 export function setupCollapseSeenComments({ newIds }) {
-	const subtext = document.querySelector(".fatitem .subtext");
+	const subline = getFatitemSubline();
 	const rows = Array.from(document.querySelectorAll("tr.comtr"));
-	if (!subtext || rows.length === 0 || newIds.length === 0) return;
+	if (!subline || rows.length === 0 || newIds.length === 0) return;
 
 	const newIdSet = new Set(newIds);
 	const plan = planSeenCollapse(
@@ -77,6 +77,6 @@ export function setupCollapseSeenComments({ newIds }) {
 	});
 
 	// Match HN's subtext separator pattern: " | <link>".
-	subtext.append(document.createTextNode(" | "));
-	subtext.append(link);
+	subline.append(document.createTextNode(" | "));
+	subline.append(link);
 }

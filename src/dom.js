@@ -82,6 +82,18 @@ export function getStoryListTable() {
 	return table;
 }
 
+// The fatitem's subline — the "1719 points by alvis 3 hours ago | hide |
+// past | favorite | 1201 comments" span. Every item-level action we inject
+// ("toggle all", "collapse seen") belongs there rather than in the enclosing
+// `.subtext` cell: renderAllUsernames inserts the author's block-level
+// control row immediately after the subline, so anything appended to the cell
+// is pushed onto a line of its own underneath that row. Falls back to the
+// cell on markup with no subline.
+export function getFatitemSubline() {
+	const subtext = document.querySelector(".fatitem .subtext");
+	return subtext?.querySelector(".subline") || subtext || null;
+}
+
 // Given a story's `tr.athing.submission` row (on a listing) or the item
 // page's fatitem header row, return its "n comments" link. HN puts the
 // subtext (score, by-user, age, hide, comments) on the next sibling row;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+d60ef90
+// @version      0.11+4e21731
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -1492,6 +1492,18 @@ function getStoryListTable() {
 	return table;
 }
 
+// The fatitem's subline — the "1719 points by alvis 3 hours ago | hide |
+// past | favorite | 1201 comments" span. Every item-level action we inject
+// ("toggle all", "collapse seen") belongs there rather than in the enclosing
+// `.subtext` cell: renderAllUsernames inserts the author's block-level
+// control row immediately after the subline, so anything appended to the cell
+// is pushed onto a line of its own underneath that row. Falls back to the
+// cell on markup with no subline.
+function getFatitemSubline() {
+	const subtext = document.querySelector(".fatitem .subtext");
+	return subtext?.querySelector(".subline") || subtext || null;
+}
+
 // Given a story's `tr.athing.submission` row (on a listing) or the item
 // page's fatitem header row, return its "n comments" link. HN puts the
 // subtext (score, by-user, age, hide, comments) on the next sibling row;
@@ -2554,9 +2566,9 @@ function fireToggle(row) {
 	row.querySelector("a.togg")?.click();
 }
 function setupToggleAllComments() {
-	const subtext = document.querySelector(".fatitem .subtext");
+	const subline = getFatitemSubline();
 	const allRows = Array.from(document.querySelectorAll("tr.comtr"));
-	if (!subtext || allRows.length === 0) return;
+	if (!subline || allRows.length === 0) return;
 
 	const levels = allRows.map(commentIndentLevel);
 
@@ -2574,8 +2586,8 @@ function setupToggleAllComments() {
 			},
 		});
 		// Match HN's subtext separator pattern: " | <link>".
-		subtext.append(document.createTextNode(" | "));
-		subtext.append(link);
+		subline.append(document.createTextNode(" | "));
+		subline.append(link);
 	}
 
 	if (!TOGGLE_ALL_REPLIES_ENABLED) return;
@@ -2699,9 +2711,9 @@ function setupHighlightUnreadComments({ store }) {
 // own classes instead, which also means a comment you collapsed on HN
 // stays collapsed through both halves of this toggle.
 function setupCollapseSeenComments({ newIds }) {
-	const subtext = document.querySelector(".fatitem .subtext");
+	const subline = getFatitemSubline();
 	const rows = Array.from(document.querySelectorAll("tr.comtr"));
-	if (!subtext || rows.length === 0 || newIds.length === 0) return;
+	if (!subline || rows.length === 0 || newIds.length === 0) return;
 
 	const newIdSet = new Set(newIds);
 	const plan = planSeenCollapse(
@@ -2757,8 +2769,8 @@ function setupCollapseSeenComments({ newIds }) {
 	});
 
 	// Match HN's subtext separator pattern: " | <link>".
-	subtext.append(document.createTextNode(" | "));
-	subtext.append(link);
+	subline.append(document.createTextNode(" | "));
+	subline.append(link);
 }
 
 

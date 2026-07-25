@@ -10,16 +10,16 @@
 // page render on items with hundreds of comments. Default off.
 
 import { TOGGLE_ALL_REPLIES_ENABLED } from "../config.js";
-import { commentIndentLevel, h } from "../dom.js";
+import { commentIndentLevel, getFatitemSubline, h } from "../dom.js";
 
 function fireToggle(row) {
 	row.querySelector("a.togg")?.click();
 }
 
 export function setupToggleAllComments() {
-	const subtext = document.querySelector(".fatitem .subtext");
+	const subline = getFatitemSubline();
 	const allRows = Array.from(document.querySelectorAll("tr.comtr"));
-	if (!subtext || allRows.length === 0) return;
+	if (!subline || allRows.length === 0) return;
 
 	const levels = allRows.map(commentIndentLevel);
 
@@ -37,8 +37,8 @@ export function setupToggleAllComments() {
 			},
 		});
 		// Match HN's subtext separator pattern: " | <link>".
-		subtext.append(document.createTextNode(" | "));
-		subtext.append(link);
+		subline.append(document.createTextNode(" | "));
+		subline.append(link);
 	}
 
 	if (!TOGGLE_ALL_REPLIES_ENABLED) return;
