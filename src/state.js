@@ -11,6 +11,7 @@ import {
 	STATE_KEY,
 	STATE_SCHEMA_VERSION,
 } from "./config.js";
+import { validateImport } from "./import-validation.js";
 import {
 	pruneExpiredByFetchedAt,
 	pruneExpiredReadComments,
@@ -585,11 +586,12 @@ export function migrateSeenKeySplit(backend) {
 
 // Accepts either the normalized export shape ({customTags, users}) or the
 // legacy flat-key dump ({hn_author_rating_<u>: N, hn_custom_tags_<u>: "...", ...})
-// and produces a consolidated state object. The cache slot is left empty -
-// import is a user-data operation, not a cache restore.
+// and produces a consolidated state object. Throws before conversion if any
+// recognized entry is malformed or the format is unsupported. The cache slot
+// is left empty — import is a user-data operation, not a cache restore.
 export function parseImport(data) {
+	validateImport(data);
 	const state = emptyState();
-	if (!data || typeof data !== "object") return state;
 
 	// Normalized format.
 	if (data.customTags || data.users || data.watches || data.storyWatches) {

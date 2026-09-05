@@ -78,7 +78,7 @@ A small draggable toolbar in the top-right corner has **Save state** and **Resto
 
 **Backing up your data.** Click **Save state** in the top-right toolbar. A JSON file downloads containing all your ratings, tags, tag colors, watched comments, and watched stories.
 
-**Restoring your data.** Click **Restore state** and pick a previously-exported JSON file. Your current data is replaced and the page reloads.
+**Restoring your data.** Click **Restore state** and pick a previously-exported JSON file. The file is validated before any data is replaced; unrelated JSON or malformed backup entries produce an error and leave your existing data untouched. Current and legacy backup formats are supported. Valid backups replace your current data and reload the page, including properly structured empty backups.
 
 **Moving the toolbar.** Grab the orange handle on the left edge of the toolbar and drag it.
 

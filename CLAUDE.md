@@ -47,6 +47,7 @@ src/
                              linkifySegments, sortStoriesBy, parseCommentCount,
                              shouldAutoCollapseAuthor, parseParentIdFromHref,
                              splitHtmlIntoParagraphs
+  import-validation.js       validateImport: rejects unsupported/malformed backups before conversion
   state.js                   createStore, migrateLegacyKeys, migrateCacheKeySplit,
                              migrateSeenKeySplit, parseImport, stateToExport,
                              renameTagInState, removeTagInState, countsFromState

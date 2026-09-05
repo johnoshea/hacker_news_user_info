@@ -44,6 +44,7 @@ const VERSION = `${BASE_VERSION}+${gitShortHash()}`;
 const SOURCES = [
 	"src/config.js",
 	"src/parsing.js",
+	"src/import-validation.js",
 	"src/state.js",
 	"src/dom.js",
 	"src/styles.js",

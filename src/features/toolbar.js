@@ -32,9 +32,17 @@ export function createToolbar({ store }) {
 			if (!file) return;
 			const reader = new FileReader();
 			reader.onload = (e) => {
+				let parsed;
 				try {
 					const raw = JSON.parse(e.target.result);
-					const parsed = parseImport(raw);
+					parsed = parseImport(raw);
+				} catch (error) {
+					alert(
+						`Cannot restore backup: ${error.message} Your existing data has not been changed.`,
+					);
+					return;
+				}
+				try {
 					// Replace every slice (user data + caches/watches) and reload
 					// so the page rebuilds from a fresh store.
 					store.replaceAll(parsed);

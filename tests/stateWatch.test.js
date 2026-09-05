@@ -196,10 +196,10 @@ test("parseImport: round-trips watches from normalized export", () => {
 		customTags: {},
 		users: {},
 		watches: {
-			c1: {
-				itemId: "i1",
-				seenKids: ["r1"],
-				latestKids: ["r1", "r2"],
+			123: {
+				itemId: "456",
+				seenKids: [789],
+				latestKids: [789, 790],
 				lastCheckedAt: 1_000,
 				addedAt: 500,
 			},
@@ -207,10 +207,10 @@ test("parseImport: round-trips watches from normalized export", () => {
 	};
 	const state = parseImport(exported);
 	assert.deepEqual(state.watchedComments, {
-		c1: {
-			itemId: "i1",
-			seenKids: ["r1"],
-			latestKids: ["r1", "r2"],
+		123: {
+			itemId: "456",
+			seenKids: [789],
+			latestKids: [789, 790],
 			lastCheckedAt: 1_000,
 			addedAt: 500,
 		},
