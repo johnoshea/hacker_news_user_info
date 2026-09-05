@@ -34,7 +34,19 @@
       "Skill(code-review:code-review)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "mcp__fetch__fetch"
+      "mcp__fetch__fetch",
+      "Bash(node --test tests/affectedUsers.test.js)",
+      "Bash(node --test tests/store.test.js)",
+      "Bash(node --test tests/store.test.js tests/affectedUsers.test.js)",
+      "mcp__plugin_episodic-memory_episodic-memory__search",
+      "mcp__plugin_episodic-memory_episodic-memory__read",
+      "Bash(node --test tests/cacheKeySplit.test.js)",
+      "Bash(node --test tests/storyWatch.test.js)",
+      "Bash(just biome *)",
+      "Bash(prek run *)",
+      "Bash(just verify-build *)",
+      "Bash(node --test tests/seenKeySplit.test.js)",
+      "Bash(node --test tests/parsingWatch.test.js)"
     ]
   }
 }
