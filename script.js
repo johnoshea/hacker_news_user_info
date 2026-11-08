@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hacker News - Inline Account Info, Legible Custom Tags and Rating
 // @namespace    Violent Monkey
-// @version      0.11+558967d
+// @version      0.11+b4cc333
 // @description  Inline account info, custom tags and ratings on comment pages, plus site-wide legibility tweaks (quote rendering, downvote contrast, font/layout cleanup, optional comment-box toggle)
 // @author       You
 // @match        https://news.ycombinator.com/*
@@ -1556,6 +1556,12 @@ function countsFromState(state) {
 
 // ===== src/dom.js =====
 
+// Matches HN's username links. HN does not always set the "hnuser" class,
+// so also match a plain profile link in a comment's comhead or a story's
+// subline. The top-bar link to your own profile is in neither.
+const USERNAME_LINK_SELECTOR =
+	'a.hnuser, .comhead > a[href^="user?id="], .subline > a[href^="user?id="]';
+
 // Tiny element factory. Accepts text content and event handlers but
 // intentionally does NOT accept innerHTML - all text goes through
 // textContent so it can't become an XSS foothold even if we later pass a
@@ -2935,7 +2941,7 @@ function setupCollapseSeenComments({ newIds }) {
 // has a visible reason for the empty body.
 function setupAutoCollapseLowScore({ store }) {
 	for (const row of document.querySelectorAll("tr.comtr")) {
-		const userEl = row.querySelector(".hnuser");
+		const userEl = row.querySelector(USERNAME_LINK_SELECTOR);
 		const username = userEl?.textContent || "";
 		if (!username) continue;
 		row.dataset.hnAuthor = username;
@@ -3056,7 +3062,7 @@ function createHoverPopup() {
 
 // ===== src/features/user-info-hover.js =====
 
-// Hover any .hnuser link to see a popup with the user's account age,
+// Hover any username link to see a popup with the user's account age,
 // karma, and (if any) about-text snippet. Shares the popup primitive
 // with item-info-hover, and the user-data cache with renderAllUsernames
 // — repeat hovers cost zero requests.
@@ -3064,9 +3070,10 @@ function createHoverPopup() {
 // Skipped on the /user page itself (you're already looking at the
 // profile).
 //
-// On item pages, renderAllUsernames hides each original .hnuser and
-// inserts a visible clone inside .hn-main-row — so this pass must run
-// after renderAllUsernames, and we attach to every .hnuser we find.
+// On item pages, renderAllUsernames hides each original username link
+// and inserts a visible clone (.hn-username) inside .hn-main-row — so this
+// pass must run after renderAllUsernames, and we attach to every username
+// link and clone we find.
 // Handlers on the hidden originals never fire (display:none = no mouse
 // events); the visible clones do, and the popup adds the about-text
 // snippet that the inline (age, karma) blurb doesn't show.
@@ -3109,8 +3116,10 @@ function renderUserPopup(username, data) {
 }
 function setupUserInfoHover({ fetchUser, popup }) {
 	if (isOnUserPage()) return;
-	for (const link of document.querySelectorAll("a.hnuser")) {
-		// On item pages renderAllUsernames hides each original .hnuser
+	for (const link of document.querySelectorAll(
+		`${USERNAME_LINK_SELECTOR}, a.hn-username`,
+	)) {
+		// On item pages renderAllUsernames hides each original username link
 		// (display:none) behind a visible clone. Hidden links never fire
 		// mouse events, so wiring dwell listeners to them is pure per-page
 		// retention on large threads — attach only to the visible ones.
@@ -4193,14 +4202,17 @@ function createUserRender({ store, fetchUser, openTagManager }) {
 	// which keeps construction cheap on large threads where most users are
 	// never tagged or rated.
 	function renderAllUsernames() {
-		const usernameElements = Array.from(document.querySelectorAll(".hnuser"));
+		const usernameElements = Array.from(
+			document.querySelectorAll(USERNAME_LINK_SELECTOR),
+		);
 		// The OP's username appears in .fatitem above the comments and again
 		// on every comment they author within the thread. Reading it once
 		// here lets us tag every comment-row authorship below as [op] without
-		// also marking the fatitem's own hnuser (which is redundantly the OP
+		// also marking the fatitem's own username link (which is redundantly the OP
 		// — we already know they posted the item).
 		const itemAuthor =
-			document.querySelector(".fatitem .hnuser")?.textContent || null;
+			document.querySelector(".fatitem")?.querySelector(USERNAME_LINK_SELECTOR)
+				?.textContent || null;
 
 		for (const usernameEl of usernameElements) {
 			const username = usernameEl.textContent;
@@ -5283,10 +5295,10 @@ if (isItemPage()) {
 	setupReplyInline();
 }
 
-// User-info hover wires every .hnuser on every page (except /user
+// User-info hover wires every username link on every page (except /user
 // itself, which the feature checks internally). Must run AFTER
 // renderAllUsernames on item pages: that pass hides each original
-// .hnuser and inserts a visible clone, so the hover handler has to
+// username link and inserts a visible clone, so the hover handler has to
 // land on the clone.
 setupUserInfoHover({ fetchUser, popup: hoverPopup });
 

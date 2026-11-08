@@ -1,4 +1,4 @@
-// Hover any .hnuser link to see a popup with the user's account age,
+// Hover any username link to see a popup with the user's account age,
 // karma, and (if any) about-text snippet. Shares the popup primitive
 // with item-info-hover, and the user-data cache with renderAllUsernames
 // — repeat hovers cost zero requests.
@@ -6,14 +6,15 @@
 // Skipped on the /user page itself (you're already looking at the
 // profile).
 //
-// On item pages, renderAllUsernames hides each original .hnuser and
-// inserts a visible clone inside .hn-main-row — so this pass must run
-// after renderAllUsernames, and we attach to every .hnuser we find.
+// On item pages, renderAllUsernames hides each original username link
+// and inserts a visible clone (.hn-username) inside .hn-main-row — so this
+// pass must run after renderAllUsernames, and we attach to every username
+// link and clone we find.
 // Handlers on the hidden originals never fire (display:none = no mouse
 // events); the visible clones do, and the popup adds the about-text
 // snippet that the inline (age, karma) blurb doesn't show.
 
-import { h } from "../dom.js";
+import { h, USERNAME_LINK_SELECTOR } from "../dom.js";
 import { timeSince, truncateText } from "../parsing.js";
 
 const ABOUT_PREVIEW_MAX = 280;
@@ -53,8 +54,10 @@ function renderUserPopup(username, data) {
 
 export function setupUserInfoHover({ fetchUser, popup }) {
 	if (isOnUserPage()) return;
-	for (const link of document.querySelectorAll("a.hnuser")) {
-		// On item pages renderAllUsernames hides each original .hnuser
+	for (const link of document.querySelectorAll(
+		`${USERNAME_LINK_SELECTOR}, a.hn-username`,
+	)) {
+		// On item pages renderAllUsernames hides each original username link
 		// (display:none) behind a visible clone. Hidden links never fire
 		// mouse events, so wiring dwell listeners to them is pure per-page
 		// retention on large threads — attach only to the visible ones.

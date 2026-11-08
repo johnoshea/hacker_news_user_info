@@ -6,7 +6,7 @@ import {
 	LOW_SCORE_COLLAPSE_THRESHOLD,
 	NEW_ACCOUNT_MAX_AGE_MS,
 } from "../config.js";
-import { findCommentParent, h } from "../dom.js";
+import { findCommentParent, h, USERNAME_LINK_SELECTOR } from "../dom.js";
 import {
 	isNewAccount,
 	parseTagInput,
@@ -374,14 +374,17 @@ export function createUserRender({ store, fetchUser, openTagManager }) {
 	// which keeps construction cheap on large threads where most users are
 	// never tagged or rated.
 	function renderAllUsernames() {
-		const usernameElements = Array.from(document.querySelectorAll(".hnuser"));
+		const usernameElements = Array.from(
+			document.querySelectorAll(USERNAME_LINK_SELECTOR),
+		);
 		// The OP's username appears in .fatitem above the comments and again
 		// on every comment they author within the thread. Reading it once
 		// here lets us tag every comment-row authorship below as [op] without
-		// also marking the fatitem's own hnuser (which is redundantly the OP
+		// also marking the fatitem's own username link (which is redundantly the OP
 		// — we already know they posted the item).
 		const itemAuthor =
-			document.querySelector(".fatitem .hnuser")?.textContent || null;
+			document.querySelector(".fatitem")?.querySelector(USERNAME_LINK_SELECTOR)
+				?.textContent || null;
 
 		for (const usernameEl of usernameElements) {
 			const username = usernameEl.textContent;
