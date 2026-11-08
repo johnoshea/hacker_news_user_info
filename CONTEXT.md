@@ -16,8 +16,10 @@ shape; if HN renames these, the corresponding feature breaks.
 
 ### DOM (HN's markup)
 
-- **`.hnuser`** — the `<a>` wrapping a username. Our inline enrichment clones
-  it and hides the original (HN's own click handlers may still reference it).
+- **username link** — the `<a href="user?id=…">` wrapping a username, in a
+  `.comhead` or `.subline`. HN does not always give it the `hnuser` class.
+  `USERNAME_LINK_SELECTOR` matches it. Our inline enrichment clones it and
+  hides the original (HN's own click handlers may still reference it).
 - **`tr.comtr`** — one comment's table row. The unit most comment-page passes
   iterate over.
 - **`.commtext`** — a comment's body text. Carries **`.c00`** when alive (HN's
@@ -26,7 +28,7 @@ shape; if HN renames these, the corresponding feature breaks.
   collapse toggle. We append markers here (`[op]`, `[collapse root]`,
   `[low score]`).
 - **`.fatitem`** — the story-header block at the top of an item page: title,
-  score, and the comment-submit form. The OP's `.hnuser` lives here.
+  score, and the comment-submit form. The OP's username link lives here.
 - **`td.ind` (indent gutter)** — the left cell of a comment row. Its width
   encodes nesting depth at **40px per level** (level = `width / 40`); a root
   comment's gutter is ~0px wide.

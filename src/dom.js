@@ -1,3 +1,9 @@
+// Matches HN's username links. HN does not always set the "hnuser" class,
+// so also match a plain profile link in a comment's comhead or a story's
+// subline. The top-bar link to your own profile is in neither.
+export const USERNAME_LINK_SELECTOR =
+	'a.hnuser, .comhead > a[href^="user?id="], .subline > a[href^="user?id="]';
+
 // Tiny element factory. Accepts text content and event handlers but
 // intentionally does NOT accept innerHTML - all text goes through
 // textContent so it can't become an XSS foothold even if we later pass a

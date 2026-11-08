@@ -11,12 +11,12 @@
 // has a visible reason for the empty body.
 
 import { LOW_SCORE_COLLAPSE_THRESHOLD } from "../config.js";
-import { h } from "../dom.js";
+import { h, USERNAME_LINK_SELECTOR } from "../dom.js";
 import { shouldAutoCollapseAuthor } from "../parsing.js";
 
 export function setupAutoCollapseLowScore({ store }) {
 	for (const row of document.querySelectorAll("tr.comtr")) {
-		const userEl = row.querySelector(".hnuser");
+		const userEl = row.querySelector(USERNAME_LINK_SELECTOR);
 		const username = userEl?.textContent || "";
 		if (!username) continue;
 		row.dataset.hnAuthor = username;

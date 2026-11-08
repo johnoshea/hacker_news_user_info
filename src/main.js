@@ -139,9 +139,9 @@ if (isItemPage()) {
 	setupReplyInline();
 }
 
-// User-info hover wires every .hnuser on every page (except /user
+// User-info hover wires every username link on every page (except /user
 // itself, which the feature checks internally). Must run AFTER
 // renderAllUsernames on item pages: that pass hides each original
-// .hnuser and inserts a visible clone, so the hover handler has to
+// username link and inserts a visible clone, so the hover handler has to
 // land on the clone.
 setupUserInfoHover({ fetchUser, popup: hoverPopup });
